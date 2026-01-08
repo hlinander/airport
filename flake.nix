@@ -80,9 +80,7 @@
           nlohmann_json
           curl
         ] ++ [ arrow-cpp-static ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          pkgs.darwin.apple_sdk.frameworks.Security
-          pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
+          # Use frameworks from the default apple_sdk (modern approach)
           pkgs.libiconv
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
           # This provides libstdc++.so.6 on Linux
