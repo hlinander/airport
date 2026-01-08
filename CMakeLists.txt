@@ -6,9 +6,16 @@ set(TARGET_NAME airport)
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
+# Add Arrow's cmake directory to module path for its custom Find modules
+find_package(Arrow QUIET CONFIG)
+if(Arrow_FOUND AND Arrow_DIR)
+  list(APPEND CMAKE_MODULE_PATH "${Arrow_DIR}")
+endif()
+
 find_package(Arrow REQUIRED)
 find_package(ArrowFlight REQUIRED)
 find_package(msgpack-cxx CONFIG REQUIRED)
+find_package(glog CONFIG REQUIRED)
 
 project(${TARGET_NAME})
 include_directories(src/include)
@@ -70,6 +77,7 @@ target_link_libraries(${EXTENSION_NAME}
   ArrowFlight::arrow_flight_static
   gRPC::grpc++
   msgpack-cxx
+  glog::glog
 )
 
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
@@ -79,6 +87,7 @@ target_link_libraries(${LOADABLE_EXTENSION_NAME}
   ArrowFlight::arrow_flight_static
   gRPC::grpc++
   msgpack-cxx
+  glog::glog
   )
 
 

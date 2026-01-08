@@ -38,6 +38,32 @@
 
 namespace duckdb
 {
+  /// Cancel an active FlightStreamReader if present in the local state.
+  /// This is called when DuckDB signals an interrupt (e.g., user presses Ctrl+C).
+  static void AirportCancelFlightStreamReader(AirportArrowScanLocalState &state)
+  {
+    auto &reader = state.reader();
+    if (std::holds_alternative<std::shared_ptr<arrow::flight::FlightStreamReader>>(reader))
+    {
+      auto &flight_reader = std::get<std::shared_ptr<arrow::flight::FlightStreamReader>>(reader);
+      if (flight_reader)
+      {
+        flight_reader->Cancel();
+      }
+    }
+  }
+
+  /// Check if the query has been interrupted and cancel the flight stream if so.
+  /// Throws InterruptException to properly terminate the query.
+  static void AirportCheckInterrupt(ClientContext &context, AirportArrowScanLocalState &state)
+  {
+    if (context.interrupted)
+    {
+      AirportCancelFlightStreamReader(state);
+      throw InterruptException();
+    }
+  }
+
   // Create a FlightDescriptor from a DuckDB value which can be one of a few different
   // types.
   static flight::FlightDescriptor flight_descriptor_from_value(duckdb::Value &flight_descriptor)
@@ -322,6 +348,8 @@ namespace duckdb
       auto current_chunk = state.stream()->GetNextChunk();
       while (current_chunk->arrow_array.length == 0 && current_chunk->arrow_array.release)
       {
+        // Check for interrupt while fetching chunks
+        AirportCheckInterrupt(context, state);
         current_chunk = state.stream()->GetNextChunk();
       }
       state.chunk = std::move(current_chunk);
@@ -448,6 +476,9 @@ namespace duckdb
 
     while (true)
     {
+      // Check for interrupt at each iteration - this allows cancellation of long-running queries
+      AirportCheckInterrupt(context, state);
+
       auto &reader = state.reader();
       const auto has_local_scan = std::holds_alternative<std::shared_ptr<AirportLocalScanData>>(reader);
       if (has_local_scan)

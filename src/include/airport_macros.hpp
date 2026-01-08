@@ -2,8 +2,28 @@
 
 #include "airport_flight_exception.hpp"
 #include "msgpack.hpp"
+#include <arrow/status.h>
+#include <arrow/result.h>
+
 namespace duckdb
 {
+
+// Helper to convert arrow::Result<T> or arrow::Status to arrow::Status
+// This replaces arrow::internal::GenericToStatus which was removed in Arrow 22
+namespace airport_internal {
+  template <typename T>
+  inline ::arrow::Status ToStatus(const ::arrow::Result<T>& result) {
+    return result.status();
+  }
+
+  inline ::arrow::Status ToStatus(const ::arrow::Status& status) {
+    return status;
+  }
+
+  inline ::arrow::Status ToStatus(::arrow::Status&& status) {
+    return std::move(status);
+  }
+}
   struct AirportErrorExtraInfo
   {
     std::string exception_type;
@@ -38,11 +58,11 @@ namespace duckdb
 }
 
 #define AIRPORT_ARROW_ASSERT_OK_LOCATION(expr, location, message)                    \
-  for (::arrow::Status _st = ::arrow::internal::GenericToStatus((expr)); !_st.ok();) \
+  for (::arrow::Status _st = ::duckdb::airport_internal::ToStatus((expr)); !_st.ok();) \
     throw AirportFlightException(location, _st, "");
 
 #define AIRPORT_ARROW_ASSERT_OK_LOCATION_DESCRIPTOR(expr, location, descriptor, message) \
-  for (::arrow::Status _st = ::arrow::internal::GenericToStatus((expr)); !_st.ok();)     \
+  for (::arrow::Status _st = ::duckdb::airport_internal::ToStatus((expr)); !_st.ok();)     \
     throw AirportFlightException(location, descriptor, _st, message);
 
 #define AIRPORT_ARROW_ASSERT_OK_CONTAINER(expr, container, message) \
