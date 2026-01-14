@@ -23,6 +23,7 @@
 #include "airport_request_headers.hpp"
 #include "airport_schema_utils.hpp"
 #include "airport_take_flight.hpp"
+#include "airport_interrupt.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/common/arrow/schema_metadata.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
@@ -62,30 +63,6 @@ namespace duckdb
       AirportCancelFlightStreamReader(state);
       throw InterruptException();
     }
-  }
-
-  /// Check if a context is interrupted and throw InterruptException if so.
-  /// Used to convert gRPC cancellation errors to clean interrupt exceptions.
-  static void AirportCheckContextInterrupt(ClientContext &context)
-  {
-    if (context.interrupted)
-    {
-      throw InterruptException();
-    }
-  }
-
-  /// Check if an Arrow status represents a cancellation due to user interrupt.
-  /// If interrupted, throws InterruptException. Otherwise returns false.
-  static bool AirportCheckCancelledStatus(ClientContext &context, const arrow::Status &status)
-  {
-    if (context.interrupted &&
-        (status.IsCancelled() ||
-         status.IsIOError() ||
-         status.code() == arrow::StatusCode::UnknownError))
-    {
-      throw InterruptException();
-    }
-    return false;
   }
 
   // Create a FlightDescriptor from a DuckDB value which can be one of a few different
@@ -201,7 +178,7 @@ namespace duckdb
           augmented_parameters.at_value = take_flight_params.at_value();
           AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "table_function_flight_info", augmented_parameters);
 
-          auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+          auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location, true, &context);
 
           std::string_view serialized_flight_info(reinterpret_cast<const char *>(serialized_flight_info_buffer->body->data()), serialized_flight_info_buffer->body->size());
 
@@ -225,7 +202,7 @@ namespace duckdb
 
           AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "flight_info", get_flight_info_params);
 
-          auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+          auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location, true, &context);
 
           std::string_view serialized_flight_info(reinterpret_cast<const char *>(serialized_flight_info_buffer->body->data()), serialized_flight_info_buffer->body->size());
 
@@ -234,8 +211,17 @@ namespace duckdb
         }
         else
         {
+          // Set call deadline for GetFlightInfo
+          AirportSetCallDeadline(call_options, 300);
+
+          // Use interruptible wrapper for GetFlightInfo
+          auto get_flight_info_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightInfo>>(
+              context,
+              [&]()
+              { return flight_client->GetFlightInfo(call_options, descriptor); });
+
           AIRPORT_ASSIGN_OR_RAISE_CONTAINER(retrieved_flight_info,
-                                            flight_client->GetFlightInfo(call_options, descriptor),
+                                            std::move(get_flight_info_result),
                                             &location_descriptor,
                                             "GetFlightInfo");
         }

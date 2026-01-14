@@ -1,6 +1,7 @@
 #include "airport_rpc.hpp"
 #include "airport_extension.hpp"
 #include "airport_macros.hpp"
+#include "airport_interrupt.hpp"
 #include <arrow/flight/client.h>
 #include <arrow/flight/types.h>
 #include <arrow/buffer.h>
@@ -17,8 +18,16 @@ namespace duckdb
       arrow::flight::FlightCallOptions &call_options,
       const arrow::flight::Action &action,
       const std::string &server_location,
-      bool want_result)
+      bool want_result,
+      ClientContext *context)
   {
+    // Check interrupt before starting if context is available
+    if (context)
+    {
+      AirportCheckContextInterrupt(*context);
+      // Set a deadline to prevent infinite blocking (5 minute timeout)
+      AirportSetCallDeadline(call_options, 300);
+    }
     std::random_device rd;
     std::mt19937 gen(rd());
 
@@ -57,12 +66,36 @@ namespace duckdb
     // Retry DoAction
     for (int attempt = 0; attempt <= max_retries; ++attempt)
     {
-      auto invoke_result = flight_client->DoAction(call_options, action);
+      // Check interrupt before each retry attempt
+      if (context)
+      {
+        AirportCheckContextInterrupt(*context);
+      }
+
+      arrow::Result<std::unique_ptr<arrow::flight::ResultStream>> invoke_result;
+
+      // Use interruptible wrapper if context available, otherwise call directly
+      if (context)
+      {
+        invoke_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::ResultStream>>(
+            *context,
+            [&]() { return flight_client->DoAction(call_options, action); });
+      }
+      else
+      {
+        invoke_result = flight_client->DoAction(call_options, action);
+      }
 
       if (invoke_result.ok())
       {
         action_results = std::move(invoke_result).ValueUnsafe();
         break;
+      }
+
+      // Check if the error was due to interrupt
+      if (context)
+      {
+        AirportCheckCancelledStatus(*context, invoke_result.status());
       }
 
       if (attempt == max_retries || !invoke_result.status().IsIOError())
@@ -79,11 +112,36 @@ namespace duckdb
       // Retry action_results->Next()
       for (int attempt = 0; attempt <= max_retries; ++attempt)
       {
-        auto next_result = action_results->Next();
+        // Check interrupt before each retry attempt
+        if (context)
+        {
+          AirportCheckContextInterrupt(*context);
+        }
+
+        arrow::Result<std::unique_ptr<arrow::flight::Result>> next_result;
+
+        // Use interruptible wrapper if context available
+        if (context)
+        {
+          next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::Result>>(
+              *context,
+              [&]() { return action_results->Next(); });
+        }
+        else
+        {
+          next_result = action_results->Next();
+        }
+
         if (next_result.ok())
         {
           results_buffer = std::move(next_result).ValueUnsafe();
           break;
+        }
+
+        // Check if the error was due to interrupt
+        if (context)
+        {
+          AirportCheckCancelledStatus(*context, next_result.status());
         }
 
         if (attempt == max_retries || !next_result.status().IsIOError())
@@ -94,6 +152,12 @@ namespace duckdb
 
         std::this_thread::sleep_for(compute_delay(attempt));
       }
+    }
+
+    // Check interrupt before draining results
+    if (context)
+    {
+      AirportCheckContextInterrupt(*context);
     }
 
     AIRPORT_ARROW_ASSERT_OK_LOCATION(action_results->Drain(),

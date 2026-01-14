@@ -442,7 +442,7 @@ namespace duckdb
 
     AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "create_table", params);
 
-    auto result_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+    auto result_buffer = AirportCallAction(flight_client, call_options, action, server_location, true, &context);
 
     if (result_buffer == nullptr)
     {
@@ -529,7 +529,7 @@ namespace duckdb
 
     AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "flight_info", params);
 
-    auto result_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+    auto result_buffer = AirportCallAction(flight_client, call_options, action, server_location, true, &context);
 
     if (result_buffer == nullptr)
     {

@@ -12,6 +12,7 @@
 #include "airport_macros.hpp"
 #include "airport_secrets.hpp"
 #include "airport_request_headers.hpp"
+#include "airport_interrupt.hpp"
 #include "storage/airport_catalog.hpp"
 
 namespace flight = arrow::flight;
@@ -140,6 +141,9 @@ namespace duckdb
 
       if (global_state.listing == nullptr)
       {
+        // Check for interrupt before starting RPC
+        AirportCheckContextInterrupt(context);
+
         // Now send a list flights request.
         arrow::flight::FlightCallOptions call_options;
         airport_add_standard_headers(call_options, bind_data.server_location);
@@ -150,11 +154,53 @@ namespace duckdb
         airport_add_authorization_header(call_options, bind_data.auth_token);
         // printf("Calling with filters: %s\n", bind_data.json_filters.c_str());
 
-        AIRPORT_ASSIGN_OR_RAISE_LOCATION(global_state.listing, global_state.flight_client_->ListFlights(call_options, {bind_data.criteria}), bind_data.server_location, "");
+        // Set call deadline to prevent infinite blocking
+        AirportSetCallDeadline(call_options, 300);
+
+        // Use interruptible RPC wrapper for ListFlights
+        try
+        {
+          auto result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightListing>>(
+              context,
+              [&]()
+              { return global_state.flight_client_->ListFlights(call_options, {bind_data.criteria}); });
+          AIRPORT_ASSIGN_OR_RAISE_LOCATION(global_state.listing, std::move(result), bind_data.server_location, "");
+        }
+        catch (const InterruptException &)
+        {
+          throw;
+        }
+        catch (...)
+        {
+          AirportCheckContextInterrupt(context);
+          throw;
+        }
+      }
+
+      // Check for interrupt before reading from stream
+      AirportCheckContextInterrupt(context);
+
+      // Use interruptible wrapper for Next()
+      arrow::Result<std::unique_ptr<arrow::flight::FlightInfo>> next_result;
+      try
+      {
+        next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightInfo>>(
+            context,
+            [&]()
+            { return global_state.listing->Next(); });
+      }
+      catch (const InterruptException &)
+      {
+        throw;
+      }
+      catch (...)
+      {
+        AirportCheckContextInterrupt(context);
+        throw;
       }
 
       AIRPORT_ASSIGN_OR_RAISE_LOCATION(auto flight_info,
-                                       global_state.listing->Next(),
+                                       std::move(next_result),
                                        bind_data.server_location,
                                        "");
 
@@ -291,7 +337,28 @@ namespace duckdb
         AIRPORT_ASSIGN_OR_RAISE_CONTAINER(auto info_schema, flight_info->GetSchema(&dictionary_memo), &location_descriptor, "");
         FlatVector::GetData<string_t>(output.data[6])[output_row_index] = StringVector::AddStringOrBlob(output.data[6], info_schema->ToString());
 
-        AIRPORT_ASSIGN_OR_RAISE_LOCATION(flight_info, global_state.listing->Next(), bind_data.server_location, "");
+        // Check for interrupt in the loop
+        AirportCheckContextInterrupt(context);
+
+        // Use interruptible wrapper for Next() in loop
+        try
+        {
+          auto next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightInfo>>(
+              context,
+              [&]()
+              { return global_state.listing->Next(); });
+          AIRPORT_ASSIGN_OR_RAISE_LOCATION(flight_info, std::move(next_result), bind_data.server_location, "");
+        }
+        catch (const InterruptException &)
+        {
+          throw;
+        }
+        catch (...)
+        {
+          AirportCheckContextInterrupt(context);
+          throw;
+        }
+
         output_row_index++;
       }
 

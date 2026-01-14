@@ -177,7 +177,7 @@ namespace duckdb
 
     AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "create_schema", params);
 
-    auto msgpack_serialized_response = AirportCallAction(flight_client, call_options, action, server_location);
+    auto msgpack_serialized_response = AirportCallAction(flight_client, call_options, action, server_location, true, &context);
 
     if (msgpack_serialized_response == nullptr)
     {

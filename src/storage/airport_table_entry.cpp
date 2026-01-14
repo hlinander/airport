@@ -69,7 +69,7 @@ namespace duckdb
       call_options.headers.emplace_back("airport-action-name", action_name);
       AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, action_name, params);
 
-      auto result_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+      auto result_buffer = AirportCallAction(flight_client, call_options, action, server_location, true, &context);
 
       if (result_buffer == nullptr)
       {
