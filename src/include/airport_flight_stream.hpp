@@ -18,6 +18,7 @@
 #include "msgpack.hpp"
 #include "airport_location_descriptor.hpp"
 #include "airport_macros.hpp"
+#include "airport_progress.hpp"
 
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
@@ -356,6 +357,15 @@ namespace duckdb
           "ExportSchema");
     }
 
+    ~AirportTakeFlightBindData()
+    {
+      // Unregister from progress registry when scan completes
+      if (!trace_id_.empty())
+      {
+        AirportProgressRegistry::Instance().UnregisterScan(trace_id_);
+      }
+    }
+
     //    std::unique_ptr<AirportTakeFlightParameters> take_flight_params = nullptr;
 
     string json_filters;
@@ -405,6 +415,11 @@ namespace duckdb
       {
         progress_array[i].store(0.0);
       }
+      // Register with progress registry so external callers can query progress
+      if (!trace_id_.empty())
+      {
+        registry_progress_ = AirportProgressRegistry::Instance().RegisterScan(trace_id_, server_location());
+      }
     }
 
     atomic<double> *get_progress_counter(const idx_t endpoint_index) const
@@ -430,7 +445,13 @@ namespace duckdb
       {
         total += progress_array[i].load(std::memory_order_relaxed); // or acquire
       }
-      return total / (double_t)total_endpoints_;
+      double_t progress = total / (double_t)total_endpoints_;
+      // Update registry so external callers see current progress
+      if (registry_progress_)
+      {
+        registry_progress_->progress.store(progress, std::memory_order_relaxed);
+      }
+      return progress;
     }
 
     std::shared_ptr<arrow::Buffer> last_app_metadata = nullptr;
@@ -462,6 +483,8 @@ namespace duckdb
     size_t total_endpoints_ = 0;
     // This is the progress of the scan.
     std::unique_ptr<std::atomic<double>[]> progress_array = nullptr;
+    // Registry entry for external progress queries
+    std::shared_ptr<AirportProgressRegistry::ScanProgress> registry_progress_;
 
     // This is the trace id so that calls to GetFlightInfo and DoGet can be traced.
     const string trace_id_;

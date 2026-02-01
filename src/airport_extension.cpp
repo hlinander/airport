@@ -1,6 +1,7 @@
 #include "airport_extension.hpp"
 #include "duckdb.hpp"
 
+#include "airport_progress.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/storage/storage_extension.hpp"
@@ -341,5 +342,21 @@ extern "C"
     DUCKDB_CPP_EXTENSION_ENTRY(airport, loader)
     {
         duckdb::LoadInternal(loader);
+    }
+
+    /// Get the current progress of all active airport scans.
+    /// Returns a value between 0.0 and 1.0, or -1.0 if no scans are active.
+    /// This function is exported for FFI access from external applications.
+    __attribute__((visibility("default")))
+    double airport_get_scan_progress()
+    {
+        return duckdb::AirportProgressRegistry::Instance().GetTotalProgress();
+    }
+
+    /// Get the number of active airport scans.
+    __attribute__((visibility("default")))
+    size_t airport_get_active_scan_count()
+    {
+        return duckdb::AirportProgressRegistry::Instance().ActiveScanCount();
     }
 }
