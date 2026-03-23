@@ -21,6 +21,9 @@
         "filesystem",
         "flight"
       ]
+    },
+    {
+      "name": "glog"
     }
   ]
 }
