@@ -25,6 +25,7 @@
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "storage/airport_table_entry.hpp"
 #include "airport_schema_utils.hpp"
+#include "airport_interrupt.hpp"
 namespace flight = arrow::flight;
 
 /// File copied from
@@ -63,11 +64,13 @@ namespace duckdb
         atomic<double> *progress,
         std::shared_ptr<arrow::Buffer> *last_app_metadata,
         const std::shared_ptr<arrow::Schema> &schema,
-        const AirportLocationDescriptor &location_descriptor)
+        const AirportLocationDescriptor &location_descriptor,
+        std::atomic<bool> *interrupted = nullptr)
         : ArrowStreamParameters(),
           AirportLocationDescriptor(location_descriptor),
           progress(progress),
           last_app_metadata(last_app_metadata),
+          interrupted(interrupted),
           schema_(schema)
     {
     }
@@ -81,6 +84,7 @@ namespace duckdb
   public:
     atomic<double> *progress = nullptr;
     std::shared_ptr<arrow::Buffer> *last_app_metadata = nullptr;
+    std::atomic<bool> *interrupted = nullptr;
 
   private:
     const std::shared_ptr<arrow::Schema> &schema_;
@@ -323,11 +327,20 @@ namespace duckdb
 
     bool done = false;
 
+    /// Store an interrupt monitor that lives for the entire scan duration.
+    /// This keeps the StopSource alive so the stop_token on the gRPC stream
+    /// can actually trigger cancellation when context.interrupted is set.
+    void set_interrupt_monitor(unique_ptr<AirportInterruptMonitor> monitor)
+    {
+      interrupt_monitor_ = std::move(monitor);
+    }
+
   private:
     ReaderDelegate reader_;
 
     shared_ptr<ArrowArrayStreamWrapper> stream_;
     const TableFunctionInitInput input_;
+    unique_ptr<AirportInterruptMonitor> interrupt_monitor_;
   };
 
   struct AirportTakeFlightBindData : public AirportArrowScanFunctionData, public AirportLocationDescriptor

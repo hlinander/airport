@@ -91,18 +91,10 @@ namespace duckdb
     // Set call deadline to prevent infinite blocking
     AirportSetCallDeadline(call_options, 300);
 
-    // Use interruptible RPC wrapper for DoExchange
     arrow::Result<arrow::flight::FlightClient::DoExchangeResult> exchange_result_res;
     try
     {
-      exchange_result_res = AirportInterruptibleRPC<arrow::flight::FlightClient::DoExchangeResult>(
-          context,
-          [&]()
-          { return flight_client->DoExchange(call_options, descriptor); });
-    }
-    catch (const InterruptException &)
-    {
-      throw;
+      exchange_result_res = flight_client->DoExchange(call_options, descriptor);
     }
     catch (...)
     {
@@ -244,11 +236,24 @@ namespace duckdb
     // Local init.
 
     D_ASSERT(exchange_result.reader != nullptr);
+
+    // Convert to shared_ptr so the interrupt monitor can also hold a reference.
+    auto reader_shared = std::shared_ptr<arrow::flight::FlightStreamReader>(
+        std::move(exchange_result.reader));
+
+    // Create interrupt monitor that calls Cancel() on the gRPC stream.
+    // FlightStreamReader::Cancel() → grpc::ClientContext::TryCancel()
+    // which wakes up blocked Read() calls on the exchange stream.
+    global_state->interrupt_monitor = make_uniq<AirportInterruptMonitor>(
+        context,
+        [reader = reader_shared]()
+        { reader->Cancel(); });
+
     auto current_chunk = make_uniq<ArrowArrayWrapper>();
     auto scan_local_state = make_uniq<AirportArrowScanLocalState>(
         std::move(current_chunk),
         context,
-        std::move(exchange_result.reader),
+        reader_shared,
         fake_init_input);
     scan_local_state->set_stream(AirportProduceArrowScan(
         scan_bind_data->CastNoConst<AirportTakeFlightBindData>(),
@@ -258,7 +263,8 @@ namespace duckdb
         &scan_bind_data->last_app_metadata,
         scan_bind_data->schema(),
         *scan_bind_data,
-        *scan_local_state));
+        *scan_local_state,
+        &context.interrupted));
 
     scan_local_state->column_ids = fake_init_input.column_ids;
     scan_local_state->filters = fake_init_input.filters.get();

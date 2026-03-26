@@ -217,6 +217,7 @@ namespace duckdb
           // Use interruptible wrapper for GetFlightInfo
           auto get_flight_info_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightInfo>>(
               context,
+              call_options,
               [&]()
               { return flight_client->GetFlightInfo(call_options, descriptor); });
 
@@ -632,12 +633,14 @@ namespace duckdb
       std::shared_ptr<arrow::Buffer> *last_app_metadata,
       const std::shared_ptr<arrow::Schema> &schema,
       const AirportLocationDescriptor &location_descriptor,
-      AirportArrowScanLocalState &local_state)
+      AirportArrowScanLocalState &local_state,
+      std::atomic<bool> *interrupted)
   {
     AirportArrowStreamParameters parameters(progress,
                                             last_app_metadata,
                                             schema,
-                                            location_descriptor);
+                                            location_descriptor,
+                                            interrupted);
 
     auto &projected = parameters.projected_columns;
     // Preallocate space for efficiency
@@ -1087,12 +1090,20 @@ namespace duckdb
         // FIXME: make sure that the schema returned from the server is the same as
         // what we were expecting.
 
-        // So the bind data won't have a stream set on it,
-        // but the local state will, the prokblem is the CreateStream
-        // callback doesn't have a reference to the local state.
+        // Convert to shared_ptr so the monitor can also hold a reference.
+        auto stream_shared = std::shared_ptr<arrow::flight::FlightStreamReader>(
+            std::move(stream));
+        local_state.set_reader(stream_shared);
 
-        // Can we reuse the chunk?
-        local_state.set_reader(std::move(stream));
+        // Create interrupt monitor that calls Cancel() on the gRPC stream.
+        // FlightStreamReader::Cancel() → grpc::ClientContext::TryCancel()
+        // which wakes up blocked CompletionQueue::Pluck() / Read() calls.
+        // The monitor must outlive the stream reads.
+        auto do_get_monitor = make_uniq<AirportInterruptMonitor>(
+            context,
+            [reader = stream_shared]()
+            { reader->Cancel(); });
+        local_state.set_interrupt_monitor(std::move(do_get_monitor));
       }
       catch (const Exception &e)
       {
@@ -1114,7 +1125,8 @@ namespace duckdb
                                   nullptr,
                                   bind_data.schema(),
                                   bind_data,
-                                  local_state));
+                                  local_state,
+                                  &context.interrupted));
     }
     else
     {

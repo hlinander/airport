@@ -1,6 +1,7 @@
 #include "airport_flight_stream.hpp"
 #include "airport_macros.hpp"
 #include "airport_flight_exception.hpp"
+#include "airport_interrupt.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
@@ -330,12 +331,14 @@ namespace duckdb
         std::atomic<double> *progress,
         std::shared_ptr<arrow::Buffer> *last_app_metadata,
         std::shared_ptr<arrow::Schema> schema,
-        ReaderDelegate delegate)
+        ReaderDelegate delegate,
+        std::atomic<bool> *interrupted = nullptr)
         : AirportLocationDescriptor(location_descriptor),
           schema_(std::move(schema)),
           delegate_(std::move(delegate)),
           progress_(progress),
           last_app_metadata_(last_app_metadata),
+          interrupted_(interrupted),
           batch_index_(0)
     {
       // Validate inputs
@@ -387,6 +390,9 @@ namespace duckdb
       {
         return arrow::Status::Invalid("Stream reader is null");
       }
+
+      // Defense-in-depth: check interrupted before blocking on Next()
+      AirportCheckInterruptedFlag(interrupted_);
 
       AIRPORT_ASSIGN_OR_RAISE_CONTAINER(auto batch_result, reader->Next(), this, "ReadNext");
 
@@ -442,6 +448,9 @@ namespace duckdb
       {
         return arrow::Status::Invalid("Flight reader is null");
       }
+
+      // Defense-in-depth: check interrupted before blocking on Next()
+      AirportCheckInterruptedFlag(interrupted_);
 
       AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
           arrow::flight::FlightStreamChunk chunk,
@@ -539,6 +548,7 @@ namespace duckdb
     const ReaderDelegate delegate_;
     std::atomic<double> *progress_;
     std::shared_ptr<arrow::Buffer> *last_app_metadata_;
+    std::atomic<bool> *interrupted_;
     std::size_t batch_index_;
   };
 
@@ -561,7 +571,8 @@ namespace duckdb
         airport_parameters->progress,
         airport_parameters->last_app_metadata,
         airport_parameters->schema(),
-        local_state->reader());
+        local_state->reader(),
+        airport_parameters->interrupted);
 
     // Create arrow stream
     //    auto stream_wrapper = duckdb::make_uniq<duckdb::ArrowArrayStreamWrapper>();

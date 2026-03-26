@@ -93,7 +93,8 @@ namespace duckdb
       std::shared_ptr<arrow::Buffer> *last_app_metadata,
       const std::shared_ptr<arrow::Schema> &schema,
       const AirportLocationDescriptor &location_descriptor,
-      AirportArrowScanLocalState &local_state);
+      AirportArrowScanLocalState &local_state,
+      std::atomic<bool> *interrupted);
 
   void AirportTakeFlight(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);
 

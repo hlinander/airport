@@ -20,6 +20,7 @@
 #include "airport_request_headers.hpp"
 #include "airport_flight_exception.hpp"
 #include "airport_secrets.hpp"
+#include "airport_interrupt.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "airport_logging.hpp"
 
@@ -227,6 +228,8 @@ namespace duckdb
     // Acquire a lock because we don't want other threads to be writing to the same streams
     // at the same time.
 
+    AirportCheckContextInterrupt(context.client);
+
     auto appender = make_uniq<ArrowAppender>(gstate.send_types, send_update_chunk.size(), context.client.GetClientProperties(),
                                              ArrowTypeExtensionData::GetExtensionTypes(
                                                  context.client, gstate.send_types));
@@ -248,7 +251,7 @@ namespace duckdb
     // Since we wrote a batch I'd like to read the data returned if we are returning chunks.
     if (gstate.return_chunk)
     {
-      gstate.ReadDataIntoChunk(lstate.read_from_flight_chunk);
+      gstate.ReadDataIntoChunk(context.client, lstate.read_from_flight_chunk);
 
       DataChunk &mock_chunk = lstate.table_mock_chunk;
 
@@ -277,6 +280,8 @@ namespace duckdb
   {
     auto &gstate = input.global_state.Cast<AirportUpdateGlobalState>();
 
+    AirportCheckContextInterrupt(context);
+
     AIRPORT_ARROW_ASSERT_OK_CONTAINER(
         gstate.writer->DoneWriting(),
         gstate.table.table_data, "");
@@ -286,7 +291,7 @@ namespace duckdb
 
     try
     {
-      auto changed_count = gstate.ReadChangedCount(gstate.table.table_data->server_location());
+      auto changed_count = gstate.ReadChangedCount(context, gstate.table.table_data->server_location());
       if (changed_count)
       {
         gstate.changed_count = *changed_count;
@@ -294,6 +299,7 @@ namespace duckdb
     }
     catch (...)
     {
+      AirportCheckContextInterrupt(context);
       auto result = gstate.writer->Close();
       throw;
     }

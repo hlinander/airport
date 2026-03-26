@@ -173,11 +173,12 @@ namespace duckdb
                                                   bind_data.parameter.value().size())
                                             : std::make_shared<arrow::Buffer>(nullptr, 0)};
 
-        // Use interruptible RPC wrapper
+        // Use interruptible RPC wrapper with real gRPC cancellation
         try
         {
           auto result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::ResultStream>>(
               context,
+              call_options,
               [&]()
               { return global_state.flight_client_->DoAction(call_options, action); });
           AIRPORT_ASSIGN_OR_RAISE_LOCATION(global_state.result_stream, std::move(result),
@@ -201,8 +202,10 @@ namespace duckdb
       arrow::Result<std::unique_ptr<arrow::flight::Result>> next_result;
       try
       {
+        arrow::flight::FlightCallOptions next_call_options;
         next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::Result>>(
             context,
+            next_call_options,
             [&]()
             { return global_state.result_stream->Next(); });
       }

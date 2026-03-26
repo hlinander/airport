@@ -39,6 +39,7 @@
 #include "storage/airport_table_set.hpp"
 #include "storage/airport_transaction.hpp"
 #include "airport_schema_utils.hpp"
+#include "airport_interrupt.hpp"
 #include "storage/airport_alter_parameters.hpp"
 #include "airport_logging.hpp"
 
@@ -434,9 +435,23 @@ namespace duckdb
 
     auto flight_client = AirportAPI::FlightClientForLocation(bind_data.server_location());
 
+    AirportSetCallDeadline(call_options, 300);
+    AirportCheckContextInterrupt(context);
+
+    arrow::Result<arrow::flight::FlightClient::DoExchangeResult> exchange_result_res;
+    try
+    {
+      exchange_result_res = flight_client->DoExchange(call_options, bind_data.descriptor());
+    }
+    catch (...)
+    {
+      AirportCheckContextInterrupt(context);
+      throw;
+    }
+
     AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
         auto exchange_result,
-        flight_client->DoExchange(call_options, bind_data.descriptor()),
+        std::move(exchange_result_res),
         &bind_data, "AirportDynamicTableInOutGlobalInit DoExchange");
 
     AirportTableFunctionInOutParameters parameters;
@@ -521,11 +536,21 @@ namespace duckdb
 
     // Local init.
 
+    // Convert to shared_ptr so the interrupt monitor can also hold a reference.
+    auto reader_shared = std::shared_ptr<arrow::flight::FlightStreamReader>(
+        std::move(exchange_result.reader));
+
+    // Create interrupt monitor that calls Cancel() on the gRPC stream.
+    global_state->interrupt_monitor = make_uniq<AirportInterruptMonitor>(
+        context,
+        [reader = reader_shared]()
+        { reader->Cancel(); });
+
     auto current_chunk = make_uniq<ArrowArrayWrapper>();
     auto scan_local_state = make_uniq<AirportArrowScanLocalState>(
         std::move(current_chunk),
         context,
-        std::move(exchange_result.reader),
+        reader_shared,
         fake_init_input);
     scan_local_state->set_stream(
         AirportProduceArrowScan(
@@ -537,7 +562,8 @@ namespace duckdb
             &scan_bind_data->last_app_metadata,
             scan_bind_data->schema(),
             *scan_bind_data,
-            *scan_local_state));
+            *scan_local_state,
+            &context.interrupted));
 
     scan_local_state->column_ids = fake_init_input.column_ids;
     scan_local_state->filters = fake_init_input.filters.get();

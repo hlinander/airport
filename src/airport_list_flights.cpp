@@ -162,6 +162,7 @@ namespace duckdb
         {
           auto result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightListing>>(
               context,
+              call_options,
               [&]()
               { return global_state.flight_client_->ListFlights(call_options, {bind_data.criteria}); });
           AIRPORT_ASSIGN_OR_RAISE_LOCATION(global_state.listing, std::move(result), bind_data.server_location, "");
@@ -184,8 +185,10 @@ namespace duckdb
       arrow::Result<std::unique_ptr<arrow::flight::FlightInfo>> next_result;
       try
       {
+        arrow::flight::FlightCallOptions next_call_options;
         next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightInfo>>(
             context,
+            next_call_options,
             [&]()
             { return global_state.listing->Next(); });
       }
@@ -343,8 +346,10 @@ namespace duckdb
         // Use interruptible wrapper for Next() in loop
         try
         {
+          arrow::flight::FlightCallOptions loop_call_options;
           auto next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::FlightInfo>>(
               context,
+              loop_call_options,
               [&]()
               { return global_state.listing->Next(); });
           AIRPORT_ASSIGN_OR_RAISE_LOCATION(flight_info, std::move(next_result), bind_data.server_location, "");
