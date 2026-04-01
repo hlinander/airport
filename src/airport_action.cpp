@@ -161,7 +161,12 @@ namespace duckdb
         // FIXME: this will fail with large filter sizes, so its best not to pass it here.
         call_options.headers.emplace_back("airport-action-name", bind_data.action_name);
         airport_add_authorization_header(call_options, bind_data.auth_token);
-        // printf("Calling with filters: %s\n", bind_data.json_filters.c_str());
+
+        for (const auto &header_pair : bind_data.user_supplied_headers) {
+            for (const auto &header_value : header_pair.second) {
+                call_options.headers.emplace_back(header_pair.first, header_value);
+            }
+        }
 
         // Set call deadline to prevent infinite blocking
         AirportSetCallDeadline(call_options, 300);
