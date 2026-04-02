@@ -3,23 +3,14 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
-          inherit system overlays;
-        };
-
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
+          inherit system;
         };
 
         # Arrow with static libraries enabled for self-contained extension builds
@@ -41,7 +32,6 @@
 
         # Dependencies required for building
         nativeBuildInputs = with pkgs; [
-          rustToolchain
           pkg-config
           cmake
           ninja
@@ -58,7 +48,6 @@
           duckdb
           zlib
           sqlite
-          llvmPackages.libclang
           # Airport extension dependencies (using static arrow build)
           grpc
           msgpack-cxx
@@ -104,10 +93,8 @@
         devShells.default = pkgs.mkShell {
           inherit nativeBuildInputs buildInputs;
 
-          # Environment variables to help Rust find tools/libraries
           PROTOC = "${pkgs.protobuf}/bin/protoc";
           PROTOC_INCLUDE = "${pkgs.protobuf}/include";
-          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
           # Platform-specific library path
           LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux libraryPath;
