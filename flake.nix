@@ -40,6 +40,9 @@
           tmux
 	  helix
  	  fish
+        ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
+          pkgs.llvmPackages.libcxx
         ];
 
         # Dependencies required at runtime or for linking
