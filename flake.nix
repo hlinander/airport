@@ -16,10 +16,7 @@
         # Arrow with static libraries enabled for self-contained extension builds
         # Disable cloud storage integrations to reduce dependencies
         arrow-cpp-static = pkgs.arrow-cpp.overrideAttrs (oldAttrs: {
-          nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.darwin.cctools ];
           cmakeFlags = (oldAttrs.cmakeFlags or []) ++ [
-            "-DARROW_BUILD_STATIC=ON"
             "-DARROW_BUILD_SHARED=ON"
             # Disable cloud storage to avoid needing Azure SDK, GCS SDK, S3 SDK
             "-DARROW_S3=OFF"
