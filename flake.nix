@@ -16,7 +16,17 @@
         # Arrow with static libraries enabled for self-contained extension builds
         # Disable cloud storage integrations to reduce dependencies
         arrow-cpp-static = pkgs.arrow-cpp.overrideAttrs (oldAttrs: {
+          nativeBuildInputs = (oldAttrs.nativeBuildInputs or [])
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.darwin.cctools ];
+          # Nix cctools libtool -V output doesn't match Arrow's expected "cctools-<ver>"
+          # format, so Arrow rejects it as GNU libtool. Skip the check since nix cctools
+          # IS the correct Apple libtool.
+          postPatch = (oldAttrs.postPatch or "") + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+            substituteInPlace cpp/cmake_modules/BuildUtils.cmake \
+              --replace 'if(NOT "''${LIBTOOL_V_OUTPUT}" MATCHES ".*cctools-([0-9.]+).*")' 'if(FALSE)'
+          '';
           cmakeFlags = (oldAttrs.cmakeFlags or []) ++ [
+            "-DARROW_BUILD_STATIC=ON"
             "-DARROW_BUILD_SHARED=ON"
             # Disable cloud storage to avoid needing Azure SDK, GCS SDK, S3 SDK
             "-DARROW_S3=OFF"
