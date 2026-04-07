@@ -367,4 +367,26 @@ extern "C"
     {
         return duckdb::AirportProgressRegistry::Instance().ActiveScanCount();
     }
+
+    /// Get the peak memory usage across all active airport scans.
+#ifdef _MSC_VER
+    __declspec(dllexport)
+#else
+    __attribute__((visibility("default")))
+#endif
+    uint64_t airport_get_scan_peak_memory()
+    {
+        return duckdb::AirportProgressRegistry::Instance().GetMaxPeakMemory();
+    }
+
+    /// Get the current memory usage across all active airport scans.
+#ifdef _MSC_VER
+    __declspec(dllexport)
+#else
+    __attribute__((visibility("default")))
+#endif
+    uint64_t airport_get_scan_current_memory()
+    {
+        return duckdb::AirportProgressRegistry::Instance().GetTotalCurrentMemory();
+    }
 }

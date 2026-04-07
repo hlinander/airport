@@ -16,6 +16,8 @@ public:
         std::atomic<double> progress{0.0};
         std::atomic<uint64_t> rows_processed{0};
         std::atomic<uint64_t> total_rows{0};
+        std::atomic<uint64_t> peak_memory_bytes{0};
+        std::atomic<uint64_t> current_memory_bytes{0};
         std::string description;
     };
 
@@ -60,6 +62,28 @@ public:
             return -1.0;
         }
         return it->second->progress.load(std::memory_order_relaxed);
+    }
+
+    /// Get the maximum peak memory across all active scans
+    uint64_t GetMaxPeakMemory() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        uint64_t max_peak = 0;
+        for (const auto& [id, progress] : active_scans_) {
+            auto peak = progress->peak_memory_bytes.load(std::memory_order_relaxed);
+            if (peak > max_peak) max_peak = peak;
+        }
+        return max_peak;
+    }
+
+    /// Get the maximum current memory across all active scans
+    uint64_t GetTotalCurrentMemory() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        uint64_t max_current = 0;
+        for (const auto& [id, progress] : active_scans_) {
+            auto current = progress->current_memory_bytes.load(std::memory_order_relaxed);
+            if (current > max_current) max_current = current;
+        }
+        return max_current;
     }
 
     /// Get the number of active scans
