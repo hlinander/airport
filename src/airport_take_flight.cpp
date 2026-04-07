@@ -638,13 +638,17 @@ namespace duckdb
       const std::shared_ptr<arrow::Schema> &schema,
       const AirportLocationDescriptor &location_descriptor,
       AirportArrowScanLocalState &local_state,
-      std::atomic<bool> *interrupted)
+      std::atomic<bool> *interrupted,
+      std::atomic<uint64_t> *peak_memory_bytes,
+      std::atomic<uint64_t> *current_memory_bytes)
   {
     AirportArrowStreamParameters parameters(progress,
                                             last_app_metadata,
                                             schema,
                                             location_descriptor,
                                             interrupted);
+    parameters.peak_memory_bytes = peak_memory_bytes;
+    parameters.current_memory_bytes = current_memory_bytes;
 
     auto &projected = parameters.projected_columns;
     // Preallocate space for efficiency
@@ -1130,7 +1134,9 @@ namespace duckdb
                                   bind_data.schema(),
                                   bind_data,
                                   local_state,
-                                  &context.interrupted));
+                                  &context.interrupted,
+                                  bind_data.get_peak_memory_ptr(),
+                                  bind_data.get_current_memory_ptr()));
     }
     else
     {

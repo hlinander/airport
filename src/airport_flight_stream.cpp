@@ -310,8 +310,10 @@ namespace duckdb
   struct AirportScannerProgress
   {
     double progress;
+    uint64_t peak_memory_bytes = 0;
+    uint64_t current_memory_bytes = 0;
 
-    MSGPACK_DEFINE_MAP(progress)
+    MSGPACK_DEFINE_MAP(progress, peak_memory_bytes, current_memory_bytes)
   };
 
   class FlightMetadataRecordBatchReaderAdapter : public arrow::RecordBatchReader, public AirportLocationDescriptor
@@ -329,13 +331,17 @@ namespace duckdb
         std::shared_ptr<arrow::Buffer> *last_app_metadata,
         std::shared_ptr<arrow::Schema> schema,
         ReaderDelegate delegate,
-        std::atomic<bool> *interrupted = nullptr)
+        std::atomic<bool> *interrupted = nullptr,
+        std::atomic<uint64_t> *peak_memory_bytes = nullptr,
+        std::atomic<uint64_t> *current_memory_bytes = nullptr)
         : AirportLocationDescriptor(location_descriptor),
           schema_(std::move(schema)),
           delegate_(std::move(delegate)),
           progress_(progress),
           last_app_metadata_(last_app_metadata),
           interrupted_(interrupted),
+          peak_memory_bytes_(peak_memory_bytes),
+          current_memory_bytes_(current_memory_bytes),
           batch_index_(0)
     {
       // Validate inputs
@@ -511,6 +517,13 @@ namespace duckdb
             return arrow::Status::Invalid("Progress value out of range [0.0, 1.0]: " +
                                           std::to_string(progress_report.progress));
           }
+
+          if (peak_memory_bytes_) {
+              peak_memory_bytes_->store(progress_report.peak_memory_bytes, std::memory_order_relaxed);
+          }
+          if (current_memory_bytes_) {
+              current_memory_bytes_->store(progress_report.current_memory_bytes, std::memory_order_relaxed);
+          }
         }
         catch (const std::exception &e)
         {
@@ -546,6 +559,8 @@ namespace duckdb
     std::atomic<double> *progress_;
     std::shared_ptr<arrow::Buffer> *last_app_metadata_;
     std::atomic<bool> *interrupted_;
+    std::atomic<uint64_t> *peak_memory_bytes_;
+    std::atomic<uint64_t> *current_memory_bytes_;
     std::size_t batch_index_;
   };
 
@@ -569,7 +584,9 @@ namespace duckdb
         airport_parameters->last_app_metadata,
         airport_parameters->schema(),
         local_state->reader(),
-        airport_parameters->interrupted);
+        airport_parameters->interrupted,
+        airport_parameters->peak_memory_bytes,
+        airport_parameters->current_memory_bytes);
 
     // Create arrow stream
     //    auto stream_wrapper = duckdb::make_uniq<duckdb::ArrowArrayStreamWrapper>();
