@@ -640,7 +640,8 @@ namespace duckdb
       AirportArrowScanLocalState &local_state,
       std::atomic<bool> *interrupted,
       std::atomic<uint64_t> *peak_memory_bytes,
-      std::atomic<uint64_t> *current_memory_bytes)
+      std::atomic<uint64_t> *current_memory_bytes,
+      std::atomic<uint64_t> *cpu_time_us)
   {
     AirportArrowStreamParameters parameters(progress,
                                             last_app_metadata,
@@ -649,6 +650,7 @@ namespace duckdb
                                             interrupted);
     parameters.peak_memory_bytes = peak_memory_bytes;
     parameters.current_memory_bytes = current_memory_bytes;
+    parameters.cpu_time_us = cpu_time_us;
 
     auto &projected = parameters.projected_columns;
     // Preallocate space for efficiency
@@ -1136,7 +1138,8 @@ namespace duckdb
                                   local_state,
                                   &context.interrupted,
                                   bind_data.get_peak_memory_ptr(),
-                                  bind_data.get_current_memory_ptr()));
+                                  bind_data.get_current_memory_ptr(),
+                                  bind_data.get_cpu_time_ptr()));
     }
     else
     {

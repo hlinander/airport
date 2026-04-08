@@ -97,7 +97,8 @@ namespace duckdb
       AirportArrowScanLocalState &local_state,
       std::atomic<bool> *interrupted,
       std::atomic<uint64_t> *peak_memory_bytes = nullptr,
-      std::atomic<uint64_t> *current_memory_bytes = nullptr);
+      std::atomic<uint64_t> *current_memory_bytes = nullptr,
+      std::atomic<uint64_t> *cpu_time_us = nullptr);
 
   void AirportTakeFlight(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);
 

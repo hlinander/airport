@@ -18,6 +18,7 @@ public:
         std::atomic<uint64_t> total_rows{0};
         std::atomic<uint64_t> peak_memory_bytes{0};
         std::atomic<uint64_t> current_memory_bytes{0};
+        std::atomic<uint64_t> cpu_time_us{0};
         std::string description;
     };
 
@@ -35,17 +36,30 @@ public:
         return progress;
     }
 
-    /// Unregister a scan when it completes
+    /// Unregister a scan when it completes.
+    /// Preserves the final stats in last_completed_ so they can be read
+    /// after unregistration (before the next scan overwrites them).
     void UnregisterScan(const std::string& trace_id) {
         std::lock_guard<std::mutex> lock(mutex_);
-        active_scans_.erase(trace_id);
+        auto it = active_scans_.find(trace_id);
+        if (it != active_scans_.end()) {
+            auto& sp = it->second;
+            last_completed_.progress.store(sp->progress.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            last_completed_.peak_memory_bytes.store(sp->peak_memory_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            last_completed_.current_memory_bytes.store(sp->current_memory_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            last_completed_.cpu_time_us.store(sp->cpu_time_us.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            active_scans_.erase(it);
+        }
     }
 
-    /// Get the combined progress of all active scans (0.0 to 1.0)
+    /// Get the combined progress of all active scans (0.0 to 1.0).
+    /// Falls back to last completed scan's progress if no scans are active.
     double GetTotalProgress() const {
         std::lock_guard<std::mutex> lock(mutex_);
         if (active_scans_.empty()) {
-            return -1.0; // No active scans
+            // Return last completed scan's progress (or -1 if none ever completed)
+            double last = last_completed_.progress.load(std::memory_order_relaxed);
+            return last > 0.0 ? last : -1.0;
         }
         double total = 0.0;
         for (const auto& [id, progress] : active_scans_) {
@@ -64,9 +78,13 @@ public:
         return it->second->progress.load(std::memory_order_relaxed);
     }
 
-    /// Get the maximum peak memory across all active scans
+    /// Get the maximum peak memory across all active scans.
+    /// Falls back to last completed scan if none active.
     uint64_t GetMaxPeakMemory() const {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (active_scans_.empty()) {
+            return last_completed_.peak_memory_bytes.load(std::memory_order_relaxed);
+        }
         uint64_t max_peak = 0;
         for (const auto& [id, progress] : active_scans_) {
             auto peak = progress->peak_memory_bytes.load(std::memory_order_relaxed);
@@ -75,15 +93,34 @@ public:
         return max_peak;
     }
 
-    /// Get the maximum current memory across all active scans
+    /// Get the maximum current memory across all active scans.
+    /// Falls back to last completed scan if none active.
     uint64_t GetTotalCurrentMemory() const {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (active_scans_.empty()) {
+            return last_completed_.current_memory_bytes.load(std::memory_order_relaxed);
+        }
         uint64_t max_current = 0;
         for (const auto& [id, progress] : active_scans_) {
             auto current = progress->current_memory_bytes.load(std::memory_order_relaxed);
             if (current > max_current) max_current = current;
         }
         return max_current;
+    }
+
+    /// Get the maximum CPU time across all active scans.
+    /// Falls back to last completed scan if none active.
+    uint64_t GetMaxCpuTimeUs() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (active_scans_.empty()) {
+            return last_completed_.cpu_time_us.load(std::memory_order_relaxed);
+        }
+        uint64_t max_cpu = 0;
+        for (const auto& [id, progress] : active_scans_) {
+            auto cpu = progress->cpu_time_us.load(std::memory_order_relaxed);
+            if (cpu > max_cpu) max_cpu = cpu;
+        }
+        return max_cpu;
     }
 
     /// Get the number of active scans
@@ -107,6 +144,8 @@ private:
     AirportProgressRegistry() = default;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<ScanProgress>> active_scans_;
+    /// Stats from the most recently completed scan, readable after unregistration.
+    ScanProgress last_completed_;
 };
 
 } // namespace duckdb

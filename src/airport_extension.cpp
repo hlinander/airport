@@ -402,4 +402,15 @@ extern "C"
     {
         return duckdb::AirportProgressRegistry::Instance().GetTotalCurrentMemory();
     }
+
+    /// Get the CPU time across all active airport scans (in microseconds).
+#ifdef _MSC_VER
+    __declspec(dllexport)
+#else
+    __attribute__((visibility("default")))
+#endif
+    uint64_t airport_get_scan_cpu_time()
+    {
+        return duckdb::AirportProgressRegistry::Instance().GetMaxCpuTimeUs();
+    }
 }
