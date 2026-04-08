@@ -86,6 +86,7 @@ namespace duckdb
     std::atomic<bool> *interrupted = nullptr;
     std::atomic<uint64_t> *peak_memory_bytes = nullptr;
     std::atomic<uint64_t> *current_memory_bytes = nullptr;
+    std::atomic<uint64_t> *cpu_time_us = nullptr;
 
   private:
     const std::shared_ptr<arrow::Schema> &schema_;
@@ -447,6 +448,7 @@ namespace duckdb
 
     std::atomic<uint64_t> *get_peak_memory_ptr() const { return &peak_memory_bytes_; }
     std::atomic<uint64_t> *get_current_memory_ptr() const { return &current_memory_bytes_; }
+    std::atomic<uint64_t> *get_cpu_time_ptr() const { return &cpu_time_us_; }
 
     double_t total_progress() const
     {
@@ -468,6 +470,8 @@ namespace duckdb
             peak_memory_bytes_.load(std::memory_order_relaxed), std::memory_order_relaxed);
         registry_progress_->current_memory_bytes.store(
             current_memory_bytes_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        registry_progress_->cpu_time_us.store(
+            cpu_time_us_.load(std::memory_order_relaxed), std::memory_order_relaxed);
       }
       return progress;
     }
@@ -504,6 +508,7 @@ namespace duckdb
     // Memory tracking from server metadata
     mutable std::atomic<uint64_t> peak_memory_bytes_{0};
     mutable std::atomic<uint64_t> current_memory_bytes_{0};
+    mutable std::atomic<uint64_t> cpu_time_us_{0};
     // Registry entry for external progress queries
     std::shared_ptr<AirportProgressRegistry::ScanProgress> registry_progress_;
 

@@ -312,8 +312,9 @@ namespace duckdb
     double progress;
     uint64_t peak_memory_bytes = 0;
     uint64_t current_memory_bytes = 0;
+    uint64_t cpu_time_us = 0;
 
-    MSGPACK_DEFINE_MAP(progress, peak_memory_bytes, current_memory_bytes)
+    MSGPACK_DEFINE_MAP(progress, peak_memory_bytes, current_memory_bytes, cpu_time_us)
   };
 
   class FlightMetadataRecordBatchReaderAdapter : public arrow::RecordBatchReader, public AirportLocationDescriptor
@@ -333,7 +334,8 @@ namespace duckdb
         ReaderDelegate delegate,
         std::atomic<bool> *interrupted = nullptr,
         std::atomic<uint64_t> *peak_memory_bytes = nullptr,
-        std::atomic<uint64_t> *current_memory_bytes = nullptr)
+        std::atomic<uint64_t> *current_memory_bytes = nullptr,
+        std::atomic<uint64_t> *cpu_time_us = nullptr)
         : AirportLocationDescriptor(location_descriptor),
           schema_(std::move(schema)),
           delegate_(std::move(delegate)),
@@ -342,6 +344,7 @@ namespace duckdb
           interrupted_(interrupted),
           peak_memory_bytes_(peak_memory_bytes),
           current_memory_bytes_(current_memory_bytes),
+          cpu_time_us_(cpu_time_us),
           batch_index_(0)
     {
       // Validate inputs
@@ -524,6 +527,9 @@ namespace duckdb
           if (current_memory_bytes_) {
               current_memory_bytes_->store(progress_report.current_memory_bytes, std::memory_order_relaxed);
           }
+          if (cpu_time_us_) {
+              cpu_time_us_->store(progress_report.cpu_time_us, std::memory_order_relaxed);
+          }
         }
         catch (const std::exception &e)
         {
@@ -561,6 +567,7 @@ namespace duckdb
     std::atomic<bool> *interrupted_;
     std::atomic<uint64_t> *peak_memory_bytes_;
     std::atomic<uint64_t> *current_memory_bytes_;
+    std::atomic<uint64_t> *cpu_time_us_;
     std::size_t batch_index_;
   };
 
@@ -586,7 +593,8 @@ namespace duckdb
         local_state->reader(),
         airport_parameters->interrupted,
         airport_parameters->peak_memory_bytes,
-        airport_parameters->current_memory_bytes);
+        airport_parameters->current_memory_bytes,
+        airport_parameters->cpu_time_us);
 
     // Create arrow stream
     //    auto stream_wrapper = duckdb::make_uniq<duckdb::ArrowArrayStreamWrapper>();
