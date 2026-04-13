@@ -93,6 +93,17 @@ target_link_libraries(${LOADABLE_EXTENSION_NAME}
   glog::glog
   )
 
+# Export additional symbols for FFI access (progress monitoring)
+if(APPLE)
+  target_link_options(${LOADABLE_EXTENSION_NAME} PRIVATE
+    -Wl,-exported_symbol,_airport_get_scan_progress
+    -Wl,-exported_symbol,_airport_get_active_scan_count
+    -Wl,-exported_symbol,_airport_get_scan_peak_memory
+    -Wl,-exported_symbol,_airport_get_scan_current_memory
+    -Wl,-exported_symbol,_airport_get_scan_cpu_time
+  )
+endif()
+
 
 install(
   TARGETS ${EXTENSION_NAME}
