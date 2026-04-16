@@ -51,7 +51,12 @@
  	  fish
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.llvmPackages.libcxx
+          # NOTE: do NOT add pkgs.llvmPackages.libcxx here. The airport extension
+          # is loaded into duckvis, which links against the macOS system libc++
+          # (/usr/lib/libc++.1.dylib). If we ship a different libc++ inside the
+          # extension, exceptions thrown in airport get a different typeinfo than
+          # duckvis/DuckDB expects, so `catch (std::exception&)` misses and the
+          # error surfaces as "Unknown exception in ExecutorTask::Execute".
         ];
 
         # Dependencies required at runtime or for linking
