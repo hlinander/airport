@@ -15,6 +15,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "airport_location_descriptor.hpp"
 #include "airport_schema_utils.hpp"
+#include "airport_interrupt.hpp"
 #include "storage/airport_transaction.hpp"
 #include "storage/airport_catalog.hpp"
 #include <numeric>
@@ -78,10 +79,25 @@ namespace duckdb
 
         airport_add_flight_path_header(call_options, this->descriptor());
 
+        AirportCheckContextInterrupt(context);
+
+        arrow::Result<arrow::flight::FlightClient::DoExchangeResult> exchange_result_res;
+        try
+        {
+          exchange_result_res = flight_client->DoExchange(call_options, this->descriptor());
+        }
+        catch (...)
+        {
+          AirportCheckContextInterrupt(context);
+          throw;
+        }
+
         AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
             auto exchange_result,
-            flight_client->DoExchange(call_options, this->descriptor()),
+            std::move(exchange_result_res),
             this, "");
+
+        AirportCheckContextInterrupt(context);
 
         // Tell the server the schema that we will be using to write data.
         AIRPORT_ARROW_ASSERT_OK_CONTAINER(
@@ -98,6 +114,8 @@ namespace duckdb
             function_output_schema_,
             this->descriptor(),
             nullptr);
+
+        AirportCheckContextInterrupt(context);
 
         // Read the schema for the results being returned.
         AIRPORT_ASSIGN_OR_RAISE_CONTAINER(auto read_schema,
@@ -139,11 +157,23 @@ namespace duckdb
             projection_ids,
             nullptr);
 
+        // Convert to shared_ptr so the interrupt monitor can also hold a reference.
+        auto reader_shared = std::shared_ptr<arrow::flight::FlightStreamReader>(
+            std::move(exchange_result.reader));
+
+        // Create interrupt monitor that calls Cancel() on the gRPC stream.
+        // FlightStreamReader::Cancel() → grpc::ClientContext::TryCancel()
+        // which wakes up blocked Read() calls.
+        interrupt_monitor_ = make_uniq<AirportInterruptMonitor>(
+            context,
+            [reader = reader_shared]()
+            { reader->Cancel(); });
+
         auto current_chunk = make_uniq<ArrowArrayWrapper>();
         scan_local_state_ = make_uniq<AirportArrowScanLocalState>(
             std::move(current_chunk),
             context,
-            std::move(exchange_result.reader), fake_init_input);
+            reader_shared, fake_init_input);
         scan_local_state_->set_stream(
             AirportProduceArrowScan(
                 *scan_bind_data_,
@@ -155,7 +185,8 @@ namespace duckdb
                 nullptr,
                 scan_bind_data_->schema(),
                 *this,
-                *scan_local_state_));
+                *scan_local_state_,
+                &context.interrupted));
         scan_local_state_->column_ids = fake_init_input.column_ids;
         scan_local_state_->filters = fake_init_input.filters.get();
       }
@@ -185,6 +216,7 @@ namespace duckdb
       const std::optional<std::string> transaction_id_;
 
       unique_ptr<ArrowAppender> appender_ = nullptr;
+      unique_ptr<AirportInterruptMonitor> interrupt_monitor_;
       DataChunk returning_data_chunk;
     };
 
@@ -302,6 +334,8 @@ namespace duckdb
   {
     auto &context = state.GetContext();
 
+    AirportCheckContextInterrupt(context);
+
     // So the send schema can contain ANY fields, if it does, we want to dynamically create the schema from
     // what was supplied.
     const auto arg_types = args.GetTypes();
@@ -320,10 +354,14 @@ namespace duckdb
         arrow::ImportRecordBatch(&arr, function_input_schema_),
         this, "");
 
+    AirportCheckContextInterrupt(context);
+
     // Now send that record batch to the remove server.
     AIRPORT_ARROW_ASSERT_OK_CONTAINER(
         writer_->WriteRecordBatch(*record_batch),
         this, "");
+
+    AirportCheckContextInterrupt(context);
 
     scan_local_state_->Reset();
     scan_local_state_->chunk = scan_local_state_->stream()->GetNextChunk();

@@ -79,6 +79,7 @@ namespace duckdb
       {
         invoke_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::ResultStream>>(
             *context,
+            call_options,
             [&]() { return flight_client->DoAction(call_options, action); });
       }
       else
@@ -125,6 +126,7 @@ namespace duckdb
         {
           next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::Result>>(
               *context,
+              call_options,
               [&]() { return action_results->Next(); });
         }
         else

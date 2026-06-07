@@ -6,6 +6,7 @@
 #include "airport_take_flight.hpp"
 #include "airport_table_entry.hpp"
 #include "airport_schema_utils.hpp"
+#include "airport_interrupt.hpp"
 
 namespace duckdb
 {
@@ -90,6 +91,10 @@ namespace duckdb
     std::unique_ptr<ArrowArrayStreamWrapper> reader;
     std::unique_ptr<arrow::flight::FlightStreamWriter> writer;
 
+    /// Interrupt monitor that lives for the entire exchange duration.
+    /// Keeps the StopSource alive so stream reads/writes can be cancelled.
+    unique_ptr<AirportInterruptMonitor> interrupt_monitor;
+
     duckdb::unique_ptr<TableFunctionInput> scan_table_function_input;
 
     duckdb::unique_ptr<GlobalTableFunctionState> scan_global_state;
@@ -98,14 +103,18 @@ namespace duckdb
     vector<LogicalType> send_types;
     vector<string> send_names;
 
-    void ReadDataIntoChunk(DataChunk &dest)
+    void ReadDataIntoChunk(ClientContext &context, DataChunk &dest)
     {
       auto &data = scan_table_function_input->bind_data->Cast<AirportTakeFlightBindData>();
       auto &state = scan_table_function_input->local_state->Cast<AirportArrowScanLocalState>();
 
+      AirportCheckContextInterrupt(context);
+
       dest.Reset();
       state.Reset();
       state.chunk = state.stream()->GetNextChunk();
+
+      AirportCheckContextInterrupt(context);
 
       auto output_size =
           MinValue<idx_t>(STANDARD_VECTOR_SIZE, NumericCast<idx_t>(state.chunk->arrow_array.length) - state.chunk_offset);
@@ -122,13 +131,17 @@ namespace duckdb
       dest.Verify();
     }
 
-    std::optional<uint64_t> ReadChangedCount(const string &server_location)
+    std::optional<uint64_t> ReadChangedCount(ClientContext &context, const string &server_location)
     {
       auto &bind_data = scan_table_function_input->bind_data->Cast<AirportTakeFlightBindData>();
       auto &local_state = scan_table_function_input->local_state->Cast<AirportArrowScanLocalState>();
 
+      AirportCheckContextInterrupt(context);
+
       local_state.Reset();
       local_state.chunk = local_state.stream()->GetNextChunk();
+
+      AirportCheckContextInterrupt(context);
 
       auto &last_app_metadata = bind_data.last_app_metadata;
       if (last_app_metadata)
