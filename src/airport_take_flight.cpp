@@ -40,6 +40,56 @@
 
 namespace duckdb
 {
+  /// Cancel an active FlightStreamReader if present in the local state.
+  /// This is called when DuckDB signals an interrupt (e.g., user presses Ctrl+C).
+  static void AirportCancelFlightStreamReader(AirportArrowScanLocalState &state)
+  {
+    auto &reader = state.reader();
+    if (std::holds_alternative<std::shared_ptr<arrow::flight::FlightStreamReader>>(reader))
+    {
+      auto &flight_reader = std::get<std::shared_ptr<arrow::flight::FlightStreamReader>>(reader);
+      if (flight_reader)
+      {
+        flight_reader->Cancel();
+      }
+    }
+  }
+
+  /// Check if the query has been interrupted and cancel the flight stream if so.
+  /// Throws InterruptException to properly terminate the query.
+  static void AirportCheckInterrupt(ClientContext &context, AirportArrowScanLocalState &state)
+  {
+    if (context.interrupted)
+    {
+      AirportCancelFlightStreamReader(state);
+      throw InterruptException();
+    }
+  }
+
+  /// Check if a context is interrupted and throw InterruptException if so.
+  /// Used to convert gRPC cancellation errors to clean interrupt exceptions.
+  static void AirportCheckContextInterrupt(ClientContext &context)
+  {
+    if (context.interrupted)
+    {
+      throw InterruptException();
+    }
+  }
+
+  /// Check if an Arrow status represents a cancellation due to user interrupt.
+  /// If interrupted, throws InterruptException. Otherwise returns false.
+  static bool AirportCheckCancelledStatus(ClientContext &context, const arrow::Status &status)
+  {
+    if (context.interrupted &&
+        (status.IsCancelled() ||
+         status.IsIOError() ||
+         status.code() == arrow::StatusCode::UnknownError))
+    {
+      throw InterruptException();
+    }
+    return false;
+  }
+
   // Create a FlightDescriptor from a DuckDB value which can be one of a few different
   // types.
   static flight::FlightDescriptor flight_descriptor_from_value(duckdb::Value &flight_descriptor)
@@ -133,73 +183,86 @@ namespace duckdb
 
     if (schema == nullptr)
     {
-      std::unique_ptr<arrow::flight::FlightInfo> retrieved_flight_info;
-      auto flight_client = AirportAPI::FlightClientForLocation(server_location);
-
-      if (table_function_parameters != std::nullopt)
+      try
       {
-        // Rather than calling GetFlightInfo we will call DoAction and get
-        // get the flight info that way, since it allows us to serialize
-        // all of the data we need to send instead of just the flight name.
+        // Check for interrupt before starting Flight operations
+        AirportCheckContextInterrupt(context);
 
-        AirportTableFunctionFlightInfoParameters augmented_parameters(*table_function_parameters);
+        std::unique_ptr<arrow::flight::FlightInfo> retrieved_flight_info;
+        auto flight_client = AirportAPI::FlightClientForLocation(server_location);
 
-        augmented_parameters.at_unit = take_flight_params.at_unit();
-        augmented_parameters.at_value = take_flight_params.at_value();
-        AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "table_function_flight_info", augmented_parameters);
+        if (table_function_parameters != std::nullopt)
+        {
+          // Rather than calling GetFlightInfo we will call DoAction and get
+          // get the flight info that way, since it allows us to serialize
+          // all of the data we need to send instead of just the flight name.
 
-        auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+          AirportTableFunctionFlightInfoParameters augmented_parameters(*table_function_parameters);
 
-        std::string_view serialized_flight_info(reinterpret_cast<const char *>(serialized_flight_info_buffer->body->data()), serialized_flight_info_buffer->body->size());
+          augmented_parameters.at_unit = take_flight_params.at_unit();
+          augmented_parameters.at_value = take_flight_params.at_value();
+          AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "table_function_flight_info", augmented_parameters);
 
-        // Now deserialize that flight info so we can use it.
-        AIRPORT_ASSIGN_OR_RAISE_CONTAINER(retrieved_flight_info, arrow::flight::FlightInfo::Deserialize(serialized_flight_info), &location_descriptor, "deserialize flight info");
-      }
-      else if (table_entry != nullptr)
-      {
-        // We have a table entry, which means this isn't an adhoc call to airport_take_flight, so we can call
-        // the flight_info action rather than GetFlightInfo which allows additional parameters to be passed.
-        AirportFlightInfoParameters get_flight_info_params;
+          auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location);
 
-        AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
-            get_flight_info_params.descriptor,
-            descriptor.SerializeToString(),
-            &location_descriptor,
-            "airport_take_flight: serialize flight descriptor");
+          std::string_view serialized_flight_info(reinterpret_cast<const char *>(serialized_flight_info_buffer->body->data()), serialized_flight_info_buffer->body->size());
 
-        get_flight_info_params.at_unit = take_flight_params.at_unit();
-        get_flight_info_params.at_value = take_flight_params.at_value();
+          // Now deserialize that flight info so we can use it.
+          AIRPORT_ASSIGN_OR_RAISE_CONTAINER(retrieved_flight_info, arrow::flight::FlightInfo::Deserialize(serialized_flight_info), &location_descriptor, "deserialize flight info");
+        }
+        else if (table_entry != nullptr)
+        {
+          // We have a table entry, which means this isn't an adhoc call to airport_take_flight, so we can call
+          // the flight_info action rather than GetFlightInfo which allows additional parameters to be passed.
+          AirportFlightInfoParameters get_flight_info_params;
 
-        AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "flight_info", get_flight_info_params);
+          AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
+              get_flight_info_params.descriptor,
+              descriptor.SerializeToString(),
+              &location_descriptor,
+              "airport_take_flight: serialize flight descriptor");
 
-        auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+          get_flight_info_params.at_unit = take_flight_params.at_unit();
+          get_flight_info_params.at_value = take_flight_params.at_value();
 
-        std::string_view serialized_flight_info(reinterpret_cast<const char *>(serialized_flight_info_buffer->body->data()), serialized_flight_info_buffer->body->size());
+          AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "flight_info", get_flight_info_params);
 
-        // Now deserialize that flight info so we can use it.
-        AIRPORT_ASSIGN_OR_RAISE_CONTAINER(retrieved_flight_info, arrow::flight::FlightInfo::Deserialize(serialized_flight_info), &location_descriptor, "deserialize flight info");
-      }
-      else
-      {
-        AIRPORT_ASSIGN_OR_RAISE_CONTAINER(retrieved_flight_info,
-                                          flight_client->GetFlightInfo(call_options, descriptor),
+          auto serialized_flight_info_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+
+          std::string_view serialized_flight_info(reinterpret_cast<const char *>(serialized_flight_info_buffer->body->data()), serialized_flight_info_buffer->body->size());
+
+          // Now deserialize that flight info so we can use it.
+          AIRPORT_ASSIGN_OR_RAISE_CONTAINER(retrieved_flight_info, arrow::flight::FlightInfo::Deserialize(serialized_flight_info), &location_descriptor, "deserialize flight info");
+        }
+        else
+        {
+          AIRPORT_ASSIGN_OR_RAISE_CONTAINER(retrieved_flight_info,
+                                            flight_client->GetFlightInfo(call_options, descriptor),
+                                            &location_descriptor,
+                                            "GetFlightInfo");
+        }
+
+        // Assert that the descriptor is the same as the one that was passed in.
+        if (descriptor != retrieved_flight_info->descriptor())
+        {
+          throw InvalidInputException("airport_take_flight: descriptor returned from server does not match the descriptor that was passed in to GetFlightInfo, check with Flight server implementation.");
+        }
+
+        estimated_records = retrieved_flight_info->total_records();
+
+        arrow::ipc::DictionaryMemo dictionary_memo;
+        AIRPORT_ASSIGN_OR_RAISE_CONTAINER(schema,
+                                          retrieved_flight_info->GetSchema(&dictionary_memo),
                                           &location_descriptor,
-                                          "GetFlightInfo");
+                                          "GetSchema");
       }
-
-      // Assert that the descriptor is the same as the one that was passed in.
-      if (descriptor != retrieved_flight_info->descriptor())
+      catch (const Exception &e)
       {
-        throw InvalidInputException("airport_take_flight: descriptor returned from server does not match the descriptor that was passed in to GetFlightInfo, check with Flight server implementation.");
+        // If the user interrupted, convert to clean InterruptException
+        AirportCheckContextInterrupt(context);
+        // Otherwise rethrow the original exception
+        throw;
       }
-
-      estimated_records = retrieved_flight_info->total_records();
-
-      arrow::ipc::DictionaryMemo dictionary_memo;
-      AIRPORT_ASSIGN_OR_RAISE_CONTAINER(schema,
-                                        retrieved_flight_info->GetSchema(&dictionary_memo),
-                                        &location_descriptor,
-                                        "GetSchema");
     }
 
     auto ret = make_uniq<AirportTakeFlightBindData>(
@@ -325,14 +388,30 @@ namespace duckdb
     }
     else
     {
-      auto current_chunk = state.stream()->GetNextChunk();
-      while (current_chunk->arrow_array.length == 0 && current_chunk->arrow_array.release)
+      try
       {
-        current_chunk = state.stream()->GetNextChunk();
-      }
-      state.chunk = std::move(current_chunk);
+        auto current_chunk = state.stream()->GetNextChunk();
+        while (current_chunk->arrow_array.length == 0 && current_chunk->arrow_array.release)
+        {
+          // Check for interrupt while fetching chunks
+          AirportCheckInterrupt(context, state);
+          current_chunk = state.stream()->GetNextChunk();
+        }
+        state.chunk = std::move(current_chunk);
 
-      finished_chunk = !state.chunk->arrow_array.release;
+        finished_chunk = !state.chunk->arrow_array.release;
+      }
+      catch (const Exception &e)
+      {
+        // If the user interrupted, convert gRPC errors to clean InterruptException
+        if (context.interrupted)
+        {
+          AirportCancelFlightStreamReader(state);
+          throw InterruptException();
+        }
+        // Otherwise rethrow the original exception
+        throw;
+      }
     }
 
     //! have we run out of chunks? we are done
@@ -452,6 +531,9 @@ namespace duckdb
 
     while (true)
     {
+      // Check for interrupt at each iteration - this allows cancellation of long-running queries
+      AirportCheckInterrupt(context, state);
+
       auto &reader = state.reader();
       const auto has_local_scan = std::holds_alternative<std::shared_ptr<AirportLocalScanData>>(reader);
       if (has_local_scan)
@@ -982,48 +1064,61 @@ namespace duckdb
 
     else
     {
-      if (location != flight::Location::ReuseConnection())
+      try
       {
-        AIRPORT_ASSIGN_OR_RAISE_LOCATION(flight_client,
-                                         flight::FlightClient::Connect(location),
-                                         location.ToString(),
-                                         "");
-        server_location = bind_data.server_location();
+        // Check for interrupt before starting Flight operations
+        AirportCheckContextInterrupt(context);
+
+        if (location != flight::Location::ReuseConnection())
+        {
+          AIRPORT_ASSIGN_OR_RAISE_LOCATION(flight_client,
+                                           flight::FlightClient::Connect(location),
+                                           location.ToString(),
+                                           "");
+          server_location = bind_data.server_location();
+        }
+
+        const auto &descriptor = bind_data.descriptor();
+
+        arrow::flight::FlightCallOptions call_options;
+        airport_add_normal_headers(call_options,
+                                   bind_data.take_flight_params(),
+                                   bind_data.trace_id(),
+                                   descriptor);
+
+        if (bind_data.skip_producing_result_for_update_or_delete)
+        {
+          // This is a special case where the result of the scan should be skipped.
+          // This is useful when the scan is being used to update or delete rows.
+          // For a table that doesn't actually produce row ids, so filtering cannot be applied.
+          call_options.headers.emplace_back("airport-skip-producing-results", "1");
+        }
+
+        AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
+            auto stream,
+            flight_client->DoGet(
+                call_options,
+                endpoint.ticket),
+            &bind_data,
+            "");
+
+        // FIXME: make sure that the schema returned from the server is the same as
+        // what we were expecting.
+
+        // So the bind data won't have a stream set on it,
+        // but the local state will, the prokblem is the CreateStream
+        // callback doesn't have a reference to the local state.
+
+        // Can we reuse the chunk?
+        local_state.set_reader(std::move(stream));
       }
-
-      const auto &descriptor = bind_data.descriptor();
-
-      arrow::flight::FlightCallOptions call_options;
-      airport_add_normal_headers(call_options,
-                                 bind_data.take_flight_params(),
-                                 bind_data.trace_id(),
-                                 descriptor);
-
-      if (bind_data.skip_producing_result_for_update_or_delete)
+      catch (const Exception &e)
       {
-        // This is a special case where the result of the scan should be skipped.
-        // This is useful when the scan is being used to update or delete rows.
-        // For a table that doesn't actually produce row ids, so filtering cannot be applied.
-        call_options.headers.emplace_back("airport-skip-producing-results", "1");
+        // If the user interrupted, convert gRPC errors to clean InterruptException
+        AirportCheckContextInterrupt(context);
+        // Otherwise rethrow the original exception
+        throw;
       }
-
-      AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
-          auto stream,
-          flight_client->DoGet(
-              call_options,
-              endpoint.ticket),
-          &bind_data,
-          "");
-
-      // FIXME: make sure that the schema returned from the server is the same as
-      // what we were expecting.
-
-      // So the bind data won't have a stream set on it,
-      // but the local state will, the prokblem is the CreateStream
-      // callback doesn't have a reference to the local state.
-
-      // Can we reuse the chunk?
-      local_state.set_reader(std::move(stream));
     }
 
     if (!std::holds_alternative<std::shared_ptr<AirportLocalScanData>>(local_state.reader()))
