@@ -90,7 +90,7 @@ namespace duckdb
 
     auto &server_location = airport_catalog.attach_parameters()->location();
 
-    AirportCallAction(flight_client, call_options, action, server_location, false);
+    AirportCallAction(flight_client, call_options, action, server_location, false, &context);
 
     D_ASSERT(entries.find(info.name) != entries.end());
 

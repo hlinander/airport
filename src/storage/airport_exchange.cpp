@@ -16,6 +16,7 @@
 #include "airport_secrets.hpp"
 #include "airport_flight_stream.hpp"
 #include "airport_take_flight.hpp"
+#include "airport_interrupt.hpp"
 #include "storage/airport_exchange.hpp"
 #include "airport_schema_utils.hpp"
 #include "duckdb/common/arrow/schema_metadata.hpp"
@@ -87,10 +88,38 @@ namespace duckdb
 
     airport_add_flight_path_header(call_options, descriptor);
 
+    // Check for interrupt before starting DoExchange
+    AirportCheckContextInterrupt(context);
+
+    // Set call deadline to prevent infinite blocking
+    AirportSetCallDeadline(call_options, 300);
+
+    // Use interruptible RPC wrapper for DoExchange
+    arrow::Result<arrow::flight::FlightClient::DoExchangeResult> exchange_result_res;
+    try
+    {
+      exchange_result_res = AirportInterruptibleRPC<arrow::flight::FlightClient::DoExchangeResult>(
+          context,
+          [&]()
+          { return flight_client->DoExchange(call_options, descriptor); });
+    }
+    catch (const InterruptException &)
+    {
+      throw;
+    }
+    catch (...)
+    {
+      AirportCheckContextInterrupt(context);
+      throw;
+    }
+
     AIRPORT_ASSIGN_OR_RAISE_CONTAINER(
         auto exchange_result,
-        flight_client->DoExchange(call_options, descriptor),
+        std::move(exchange_result_res),
         airport_table.table_data, "");
+
+    // Check for interrupt before sending schema
+    AirportCheckContextInterrupt(context);
 
     // Tell the server the schema that we will be using to write data.
     AIRPORT_ARROW_ASSERT_OK_CONTAINER(
@@ -106,6 +135,9 @@ namespace duckdb
     // and scan.
     //
     // But we can simulate most of that here.
+
+    // Check for interrupt before getting schema
+    AirportCheckContextInterrupt(context);
 
     AIRPORT_ASSIGN_OR_RAISE_CONTAINER(auto read_schema,
                                       exchange_result.reader->GetSchema(),
