@@ -99,7 +99,7 @@ namespace duckdb
     call_options.headers.emplace_back("airport-action-name", "column_statistics");
     AIRPORT_MSGPACK_ACTION_SINGLE_PARAMETER(action, "column_statistics", params);
 
-    auto stats_buffer = AirportCallAction(flight_client, call_options, action, server_location);
+    auto stats_buffer = AirportCallAction(flight_client, call_options, action, server_location, true, &context);
 
     auto reader = std::make_unique<arrow::io::BufferReader>(stats_buffer->body);
 

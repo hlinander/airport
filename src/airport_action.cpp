@@ -14,6 +14,7 @@
 #include "airport_macros.hpp"
 #include "airport_secrets.hpp"
 #include "airport_request_headers.hpp"
+#include "airport_interrupt.hpp"
 #include "storage/airport_catalog.hpp"
 
 namespace flight = arrow::flight;
@@ -152,6 +153,9 @@ namespace duckdb
 
       if (global_state.result_stream == nullptr)
       {
+        // Check for interrupt before starting RPC
+        AirportCheckContextInterrupt(context);
+
         // Now send a list flights request.
         arrow::flight::FlightCallOptions call_options;
         airport_add_standard_headers(call_options, bind_data.server_location);
@@ -161,6 +165,9 @@ namespace duckdb
         airport_add_authorization_header(call_options, bind_data.auth_token);
         // printf("Calling with filters: %s\n", bind_data.json_filters.c_str());
 
+        // Set call deadline to prevent infinite blocking
+        AirportSetCallDeadline(call_options, 300);
+
         arrow::flight::Action action{
             bind_data.action_name,
             bind_data.parameter.has_value() ? std::make_shared<arrow::Buffer>(
@@ -168,17 +175,56 @@ namespace duckdb
                                                   bind_data.parameter.value().size())
                                             : std::make_shared<arrow::Buffer>(nullptr, 0)};
 
-        AIRPORT_ASSIGN_OR_RAISE_LOCATION(global_state.result_stream,
-                                         global_state.flight_client_->DoAction(call_options, action),
-                                         server_location,
-                                         "airport_action");
+        // Use interruptible RPC wrapper
+        try
+        {
+          auto result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::ResultStream>>(
+              context,
+              [&]()
+              { return global_state.flight_client_->DoAction(call_options, action); });
+          AIRPORT_ASSIGN_OR_RAISE_LOCATION(global_state.result_stream, std::move(result),
+                                           server_location, "airport_action");
+        }
+        catch (const InterruptException &)
+        {
+          throw;
+        }
+        catch (...)
+        {
+          AirportCheckContextInterrupt(context);
+          throw;
+        }
       }
 
-      AIRPORT_ASSIGN_OR_RAISE_LOCATION(auto action_result, global_state.result_stream->Next(), server_location, "airport_action next item");
+      // Check for interrupt before reading from stream
+      AirportCheckContextInterrupt(context);
+
+      // Use interruptible wrapper for Next()
+      arrow::Result<std::unique_ptr<arrow::flight::Result>> next_result;
+      try
+      {
+        next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::Result>>(
+            context,
+            [&]()
+            { return global_state.result_stream->Next(); });
+      }
+      catch (const InterruptException &)
+      {
+        throw;
+      }
+      catch (...)
+      {
+        AirportCheckContextInterrupt(context);
+        throw;
+      }
+
+      AIRPORT_ASSIGN_OR_RAISE_LOCATION(auto action_result, std::move(next_result), server_location, "airport_action next item");
 
       if (action_result == nullptr)
       {
         // There are no results on the stream.
+        // Check for interrupt before draining
+        AirportCheckContextInterrupt(context);
         AIRPORT_ARROW_ASSERT_OK_LOCATION(global_state.result_stream->Drain(), server_location, "airport_action drain");
         output.SetCardinality(0);
         return;
