@@ -24,6 +24,7 @@
 #include "airport_flight_exception.hpp"
 #include "airport_secrets.hpp"
 #include "airport_constraints.hpp"
+#include "airport_interrupt.hpp"
 #include "duckdb/storage/table/append_state.hpp"
 #include "msgpack.hpp"
 #include "airport_logging.hpp"
@@ -321,6 +322,8 @@ namespace duckdb
     // at the same time.
     lock_guard<mutex> delete_guard(gstate.insert_lock);
 
+    AirportCheckContextInterrupt(context.client);
+
     AIRPORT_ARROW_ASSERT_OK_CONTAINER(
         gstate.writer->WriteRecordBatch(*record_batch),
         gstate.table.table_data, "");
@@ -328,7 +331,7 @@ namespace duckdb
     // Since we wrote a batch I'd like to read the data returned if we are returning chunks.
     if (gstate.return_chunk)
     {
-      gstate.ReadDataIntoChunk(ustate.returning_data_chunk);
+      gstate.ReadDataIntoChunk(context.client, ustate.returning_data_chunk);
       gstate.return_collection.Append(ustate.returning_data_chunk);
     }
 
@@ -343,7 +346,7 @@ namespace duckdb
   {
     auto &gstate = input.global_state.Cast<AirportInsertGlobalState>();
 
-    // printf("AirportDelete::Finalize started, indicating that writing is done\n");
+    AirportCheckContextInterrupt(context);
 
     AIRPORT_ARROW_ASSERT_OK_CONTAINER(
         gstate.writer->DoneWriting(),
@@ -354,7 +357,7 @@ namespace duckdb
 
     try
     {
-      auto changed_count = gstate.ReadChangedCount(gstate.table.table_data->server_location());
+      auto changed_count = gstate.ReadChangedCount(context, gstate.table.table_data->server_location());
       if (changed_count)
       {
         gstate.changed_count = *changed_count;
@@ -362,6 +365,7 @@ namespace duckdb
     }
     catch (...)
     {
+      AirportCheckContextInterrupt(context);
       auto result = gstate.writer->Close();
       throw;
     }
