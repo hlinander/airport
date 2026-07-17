@@ -25,4 +25,11 @@ namespace duckdb
   // Generate a random id that is used for request tracking.
   std::string airport_trace_id();
 
+  // The current client session id sent as `airport-client-session-id`.
+  std::string airport_client_session_id();
+
+  // Rotate the client session id; all subsequent requests carry the new id.
+  // Exposed to SQL as `airport_reset_client_session()`.
+  std::string airport_regenerate_client_session_id();
+
 }
