@@ -212,6 +212,13 @@ namespace duckdb
         result.Reference(val);
     }
 
+    static inline void reset_client_session(DataChunk &args, ExpressionState &state, Vector &result)
+    {
+        D_ASSERT(args.ColumnCount() == 0);
+        Value val(airport_regenerate_client_session_id());
+        result.Reference(val);
+    }
+
     static void AirportAddSimpleFunctions(ExtensionLoader &loader)
     {
         loader.RegisterFunction(
@@ -227,6 +234,17 @@ namespace duckdb
                 {},
                 LogicalType::VARCHAR,
                 get_airport_version));
+
+        // Rotates the `airport-client-session-id` header and returns the new
+        // id. VOLATILE: it must execute (side effect) rather than fold to a
+        // cached constant.
+        ScalarFunction reset_session(
+            "airport_reset_client_session",
+            {},
+            LogicalType::VARCHAR,
+            reset_client_session);
+        reset_session.stability = FunctionStability::VOLATILE;
+        loader.RegisterFunction(reset_session);
     }
 
     static void RegisterTableMacro(ExtensionLoader &loader, const string &name, const string &query,
