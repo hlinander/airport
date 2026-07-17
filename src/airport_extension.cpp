@@ -355,6 +355,14 @@ namespace duckdb
 
 } // namespace duckdb
 
+// FFI export visibility: GCC/clang attribute syntax breaks MSVC, which wants
+// __declspec(dllexport) instead.
+#ifdef _MSC_VER
+#define AIRPORT_FFI_EXPORT __declspec(dllexport)
+#else
+#define AIRPORT_FFI_EXPORT __attribute__((visibility("default")))
+#endif
+
 extern "C"
 {
     DUCKDB_CPP_EXTENSION_ENTRY(airport, loader)
@@ -365,55 +373,35 @@ extern "C"
     /// Get the current progress of all active airport scans.
     /// Returns a value between 0.0 and 1.0, or -1.0 if no scans are active.
     /// This function is exported for FFI access from external applications.
-#ifdef _MSC_VER
-    __declspec(dllexport)
-#else
-    __attribute__((visibility("default")))
-#endif
+    AIRPORT_FFI_EXPORT
     double airport_get_scan_progress()
     {
         return duckdb::AirportProgressRegistry::Instance().GetTotalProgress();
     }
 
     /// Get the number of active airport scans.
-#ifdef _MSC_VER
-    __declspec(dllexport)
-#else
-    __attribute__((visibility("default")))
-#endif
+    AIRPORT_FFI_EXPORT
     size_t airport_get_active_scan_count()
     {
         return duckdb::AirportProgressRegistry::Instance().ActiveScanCount();
     }
 
     /// Get the peak memory usage across all active airport scans.
-#ifdef _MSC_VER
-    __declspec(dllexport)
-#else
-    __attribute__((visibility("default")))
-#endif
+    AIRPORT_FFI_EXPORT
     uint64_t airport_get_scan_peak_memory()
     {
         return duckdb::AirportProgressRegistry::Instance().GetMaxPeakMemory();
     }
 
     /// Get the current memory usage across all active airport scans.
-#ifdef _MSC_VER
-    __declspec(dllexport)
-#else
-    __attribute__((visibility("default")))
-#endif
+    AIRPORT_FFI_EXPORT
     uint64_t airport_get_scan_current_memory()
     {
         return duckdb::AirportProgressRegistry::Instance().GetTotalCurrentMemory();
     }
 
     /// Get the CPU time across all active airport scans (in microseconds).
-#ifdef _MSC_VER
-    __declspec(dllexport)
-#else
-    __attribute__((visibility("default")))
-#endif
+    AIRPORT_FFI_EXPORT
     uint64_t airport_get_scan_cpu_time()
     {
         return duckdb::AirportProgressRegistry::Instance().GetMaxCpuTimeUs();
