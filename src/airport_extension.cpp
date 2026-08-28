@@ -1,6 +1,7 @@
 #include "airport_extension.hpp"
 #include "duckdb.hpp"
 
+#include "airport_progress.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
 #include "duckdb/storage/storage_extension.hpp"
