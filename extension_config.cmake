@@ -1,4 +1,9 @@
 # This file is included by DuckDB's build system. It specifies which extension to load
+#
+# This branch targets DuckDB v1.5.5. The duckdb submodule pins the hlinander
+# ThreadCPUProfiler tree, the same engine duckvis and SwanLake bundle — an
+# extension built against any other engine shifts OperatorProfiler and faults
+# the host on its first profiler-map lookup.
 
 # Extension from this repo
 duckdb_extension_load(airport
