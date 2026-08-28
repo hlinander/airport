@@ -18,6 +18,7 @@
 #include "msgpack.hpp"
 #include "airport_location_descriptor.hpp"
 #include "airport_macros.hpp"
+#include "airport_progress.hpp"
 
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
