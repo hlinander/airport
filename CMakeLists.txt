@@ -33,6 +33,7 @@ endif()
 set(EXTENSION_SOURCES
   src/airport_flight_exception.cpp
   src/airport_extension.cpp
+  src/airport_telemetry.cpp
   src/airport_flight_stream.cpp
   src/airport_json_common.cpp
   src/airport_json_serializer.cpp
@@ -110,3 +111,9 @@ install(
   EXPORT "${DUCKDB_EXPORT_SET}"
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+
+if(APPLE)
+  foreach(SYMBOL airport_execution_updates airport_execution_session_id airport_execution_free_string)
+    target_link_options(${LOADABLE_EXTENSION_NAME} PRIVATE "-Wl,-exported_symbol,_${SYMBOL}")
+  endforeach()
+endif()
