@@ -63,9 +63,7 @@ namespace duckdb
   inline void AirportSetCallDeadline(arrow::flight::FlightCallOptions &call_options,
                                      int timeout_seconds = 300)
   {
-    auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(timeout_seconds);
-    call_options.timeout = arrow::flight::TimeoutDuration{std::chrono::duration_cast<std::chrono::microseconds>(
-        deadline.time_since_epoch()).count()};
+    call_options.timeout = arrow::flight::TimeoutDuration{static_cast<double>(timeout_seconds)};
   }
 
   /**

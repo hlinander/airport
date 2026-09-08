@@ -5,6 +5,7 @@
 
 // Arrow includes.
 #include <arrow/flight/client.h>
+#include <algorithm>
 
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
@@ -60,9 +61,60 @@ namespace duckdb
 
       // If the action returns a lot of items, we need to keep the result stream here.
       std::unique_ptr<arrow::flight::ResultStream> result_stream;
+      std::atomic<bool> finished{false};
+      unique_ptr<AirportInterruptMonitor> interrupt_monitor;
 
       explicit ActionGlobalState(std::shared_ptr<flight::FlightClient> flight_client) : flight_client_(flight_client)
       {
+      }
+
+      ~ActionGlobalState() override
+      {
+        finished.store(true);
+        interrupt_monitor.reset(); // Join before destroying the captured stream/client.
+      }
+
+      void Monitor(ClientContext &context, arrow::flight::FlightCallOptions &options,
+                   const std::string &action_name)
+      {
+        if (action_name == "execute")
+        {
+          auto request_id = airport_trace_id();
+          options.headers.erase(std::remove_if(options.headers.begin(), options.headers.end(),
+              [](const std::pair<std::string, std::string> &header) { return header.first == "x-swanlake-request-id"; }),
+              options.headers.end());
+          options.headers.emplace_back("x-swanlake-request-id", request_id);
+          auto headers = options.headers;
+          interrupt_monitor = make_uniq<AirportInterruptMonitor>(context, [this, headers, request_id]()
+          {
+            // Arrow's ResultStream has no Cancel(), and its StopToken cannot
+            // wake WaitForInitialMetadata/Read. Cancel this Swanlake request on
+            // a separate authenticated RPC, including before its first result.
+            while (!finished.load())
+            {
+              arrow::flight::FlightCallOptions cancel_options;
+              cancel_options.headers = headers;
+              cancel_options.timeout = arrow::flight::TimeoutDuration{1.0};
+              arrow::flight::Action cancel_action{"cancel_execution", arrow::Buffer::FromString(request_id)};
+              auto response = flight_client_->DoAction(cancel_options, cancel_action);
+              if (response.ok())
+              {
+                auto result = (*response)->Next();
+                if (result.ok() && *result && (*result)->body->ToString() == "cancelled")
+                {
+                  return;
+                }
+              }
+              // Cancellation can reach the server before execute registration.
+              std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
+          });
+        }
+        else
+        {
+          interrupt_monitor = make_uniq<AirportInterruptMonitor>(context);
+        }
+        options.stop_token = interrupt_monitor->token();
       }
 
       idx_t MaxThreads() const override
@@ -172,6 +224,7 @@ namespace duckdb
 
         // Set call deadline to prevent infinite blocking
         AirportSetCallDeadline(call_options, 300);
+        global_state.Monitor(context, call_options, bind_data.action_name);
 
         arrow::flight::Action action{
             bind_data.action_name,
@@ -180,14 +233,10 @@ namespace duckdb
                                                   bind_data.parameter.value().size())
                                             : std::make_shared<arrow::Buffer>(nullptr, 0)};
 
-        // Use interruptible RPC wrapper with real gRPC cancellation
+        // The monitor remains alive through DoAction and every result read.
         try
         {
-          auto result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::ResultStream>>(
-              context,
-              call_options,
-              [&]()
-              { return global_state.flight_client_->DoAction(call_options, action); });
+          auto result = global_state.flight_client_->DoAction(call_options, action);
           AIRPORT_ASSIGN_OR_RAISE_LOCATION(global_state.result_stream, std::move(result),
                                            server_location, "airport_action");
         }
@@ -205,16 +254,11 @@ namespace duckdb
       // Check for interrupt before reading from stream
       AirportCheckContextInterrupt(context);
 
-      // Use interruptible wrapper for Next()
+      // Reuse the stop token and cancellation monitor attached to this stream.
       arrow::Result<std::unique_ptr<arrow::flight::Result>> next_result;
       try
       {
-        arrow::flight::FlightCallOptions next_call_options;
-        next_result = AirportInterruptibleRPC<std::unique_ptr<arrow::flight::Result>>(
-            context,
-            next_call_options,
-            [&]()
-            { return global_state.result_stream->Next(); });
+        next_result = global_state.result_stream->Next();
       }
       catch (const InterruptException &)
       {
@@ -230,6 +274,8 @@ namespace duckdb
 
       if (action_result == nullptr)
       {
+        global_state.finished.store(true);
+        global_state.interrupt_monitor.reset();
         // There are no results on the stream.
         // Check for interrupt before draining
         AirportCheckContextInterrupt(context);
