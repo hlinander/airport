@@ -11,17 +11,19 @@ duckdb_extension_load(airport
     LOAD_TESTS
 )
 
-# Left off: CMake FetchContent-clones this at configure time, and the nix build
-# has no network. nho builds httpfs separately against the same engine
-# (modules/duckdb-extensions.nix). Tag kept for reference — it is the commit
-# DuckDB v1.5.5 pins, matching the duckdb submodule.
-#duckdb_extension_load(httpfs
-#    LOAD_TESTS
-#    DONT_LINK
-#    GIT_URL https://github.com/duckdb/duckdb-httpfs
-#    GIT_TAG 827222fb45a043a7a852d1f7aae46901492a3cda
-#    INCLUDE_DIR extension/httpfs/include
-#)
+# httpfs ships in the Analyze bundle next to airport: airport declares it as a
+# load-time dependency, and the engine's auto-install cannot supply a build of
+# this tree. The tag is the commit DuckDB v1.5.5 pins, matching the duckdb
+# submodule. CMake FetchContent-clones it at configure time, so a network-less
+# build (pure nix) must drop this block; nho builds httpfs separately against
+# the same engine (modules/duckdb-extensions.nix).
+duckdb_extension_load(httpfs
+    LOAD_TESTS
+    DONT_LINK
+    GIT_URL https://github.com/duckdb/duckdb-httpfs
+    GIT_TAG 827222fb45a043a7a852d1f7aae46901492a3cda
+    INCLUDE_DIR extension/httpfs/include
+)
 
 
 # Any extra extensions that should be built
