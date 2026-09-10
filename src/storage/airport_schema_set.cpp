@@ -85,7 +85,7 @@ namespace duckdb
     const auto &catalog_name = airport_catalog.internal_name();
 
     auto returned_collection = AirportAPI::GetSchemas(
-        catalog_name, airport_catalog.attach_parameters());
+        context, catalog_name, airport_catalog.attach_parameters());
 
     airport_catalog.SetLoadedCatalogVersion(returned_collection->version_info);
     collection = std::move(returned_collection);
@@ -157,7 +157,7 @@ namespace duckdb
 
     arrow::flight::FlightCallOptions call_options;
 
-    airport_add_standard_headers(call_options, airport_catalog.attach_parameters()->location());
+    airport_add_standard_headers(call_options, airport_catalog.attach_parameters()->location(), context);
     airport_add_catalog_header(call_options, airport_catalog.internal_name());
     airport_add_authorization_header(call_options, airport_catalog.attach_parameters()->auth_token());
 

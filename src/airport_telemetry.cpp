@@ -73,6 +73,6 @@ AT_EXPORT char *airport_execution_updates(const char *endpoint, const char *head
 }
 
 AT_EXPORT char *airport_execution_session_id() {
-    try { return Copy(duckdb::airport_client_session_id()); } catch (...) { return nullptr; }
+    try { return Copy(duckdb::airport_last_client_session_id()); } catch (...) { return nullptr; }
 }
 AT_EXPORT void airport_execution_free_string(char *text) { std::free(text); }

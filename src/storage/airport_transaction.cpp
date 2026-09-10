@@ -42,7 +42,14 @@ namespace duckdb
     auto flight_client = AirportAPI::FlightClientForLocation(attach_parameters->location());
 
     arrow::flight::FlightCallOptions call_options;
-    airport_add_standard_headers(call_options, attach_parameters->location());
+    // Transaction::context is the ClientContext that opened this transaction;
+    // its per-connection session id must key the request (see airport_request_headers).
+    auto client_context = context.lock();
+    if (!client_context)
+    {
+      throw InternalException("AirportTransaction::GetTransactionIdentifier called without a live ClientContext");
+    }
+    airport_add_standard_headers(call_options, attach_parameters->location(), *client_context);
     airport_add_catalog_header(call_options, catalog_name);
     airport_add_authorization_header(call_options, attach_parameters->auth_token());
 

@@ -80,7 +80,7 @@ namespace duckdb
     // printf("Can produce statistics for this flight\n");
 
     arrow::flight::FlightCallOptions call_options;
-    airport_add_normal_headers(call_options, data.take_flight_params(), data.trace_id());
+    airport_add_normal_headers(call_options, data.take_flight_params(), data.trace_id(), context);
 
     auto &server_location = data.take_flight_params().server_location();
 

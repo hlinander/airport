@@ -414,13 +414,13 @@ namespace duckdb
   {
   public:
     static vector<string> GetCatalogs(const string &catalog, AirportAttachParameters credentials);
-    static unique_ptr<AirportSchemaContents> GetSchemaItems(DatabaseInstance &db,
+    static unique_ptr<AirportSchemaContents> GetSchemaItems(ClientContext &context, DatabaseInstance &db,
                                                             const string &catalog,
                                                             const string &schema,
                                                             const AirportSerializedContentsWithSHA256Hash &source,
                                                             const string &cache_base_dir,
                                                             std::shared_ptr<AirportAttachParameters> credentials);
-    static unique_ptr<AirportSchemaCollection> GetSchemas(const string &catalog,
+    static unique_ptr<AirportSchemaCollection> GetSchemas(ClientContext &context, const string &catalog,
                                                           const std::shared_ptr<AirportAttachParameters> &credentials);
 
     static void PopulateCatalogSchemaCacheFromURLorContent(DatabaseInstance &db,

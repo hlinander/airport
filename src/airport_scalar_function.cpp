@@ -61,7 +61,7 @@ namespace duckdb
         // FIXME: there may need to be a way for the user to supply the auth token
         // but since scalar functions are defined by the server, just assume the user
         // has the token persisted in their secret store.
-        airport_add_standard_headers(call_options, server_location);
+        airport_add_standard_headers(call_options, server_location, context);
         airport_add_catalog_header(call_options, catalog_name);
         airport_add_authorization_header(call_options, auth_token);
         airport_add_trace_id_header(call_options, trace_id);

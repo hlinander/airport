@@ -420,6 +420,7 @@ namespace duckdb
     airport_add_normal_headers(call_options,
                                bind_data.take_flight_params(),
                                trace_uuid,
+                               context,
                                bind_data.descriptor());
 
     auto auth_token = AirportAuthTokenForLocation(context, bind_data.server_location(), "", "");
@@ -738,6 +739,7 @@ namespace duckdb
     auto &airport_catalog = catalog.Cast<AirportCatalog>();
 
     auto contents = AirportAPI::GetSchemaItems(
+        context,
         db,
         catalog.GetDBPath(),
         schema.name,

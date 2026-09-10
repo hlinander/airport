@@ -210,7 +210,7 @@ namespace duckdb
     static inline void reset_client_session(DataChunk &args, ExpressionState &state, Vector &result)
     {
         D_ASSERT(args.ColumnCount() == 0);
-        Value val(airport_regenerate_client_session_id());
+        Value val(airport_regenerate_client_session_id(state.GetContext()));
         result.Reference(val);
     }
 

@@ -140,6 +140,7 @@ namespace duckdb
 
     arrow::flight::FlightCallOptions call_options;
     airport_add_normal_headers(call_options, take_flight_params, trace_uuid,
+                               context,
                                descriptor);
 
     int64_t estimated_records = -1;
@@ -743,6 +744,7 @@ namespace duckdb
     };
 
     vector<flight::FlightEndpoint> AirportGetFlightEndpoints(
+        ClientContext &context,
         const AirportTakeFlightParameters &take_flight_params,
         const string &trace_id,
         const flight::FlightDescriptor &descriptor,
@@ -757,6 +759,7 @@ namespace duckdb
       auto &server_location = take_flight_params.server_location();
 
       airport_add_normal_headers(call_options, take_flight_params, trace_id,
+                                 context,
                                  descriptor);
 
       AirportGetFlightEndpointsRequest endpoints_request;
@@ -838,7 +841,7 @@ namespace duckdb
     }
 
     auto result = make_uniq<AirportArrowScanGlobalState>(
-        AirportGetFlightEndpoints(bind_data.take_flight_params(),
+        AirportGetFlightEndpoints(context, bind_data.take_flight_params(),
                                   bind_data.trace_id(),
                                   bind_data.descriptor(),
                                   flight_client,
@@ -1079,6 +1082,7 @@ namespace duckdb
         airport_add_normal_headers(call_options,
                                    bind_data.take_flight_params(),
                                    bind_data.trace_id(),
+                                   context,
                                    descriptor);
 
         if (bind_data.skip_producing_result_for_update_or_delete)

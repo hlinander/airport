@@ -479,7 +479,7 @@ namespace duckdb
   }
 
   unique_ptr<AirportSchemaContents>
-  AirportAPI::GetSchemaItems(DatabaseInstance &db,
+  AirportAPI::GetSchemaItems(ClientContext &context, DatabaseInstance &db,
                              const string &catalog,
                              const string &schema,
                              const AirportSerializedContentsWithSHA256Hash &source,
@@ -554,7 +554,7 @@ namespace duckdb
     {
       // We need to load the contents of the schemas by listing the flights.
       arrow::flight::FlightCallOptions call_options;
-      airport_add_standard_headers(call_options, credentials->location());
+      airport_add_standard_headers(call_options, credentials->location(), context);
       airport_add_catalog_header(call_options, catalog);
       call_options.headers.emplace_back("airport-list-flights-filter-catalog", catalog);
       call_options.headers.emplace_back("airport-list-flights-filter-schema", schema);
@@ -615,12 +615,12 @@ namespace duckdb
   }
 
   unique_ptr<AirportSchemaCollection>
-  AirportAPI::GetSchemas(const string &catalog_name,
+  AirportAPI::GetSchemas(ClientContext &context, const string &catalog_name,
                          const std::shared_ptr<AirportAttachParameters> &credentials)
   {
     auto result = make_uniq<AirportSchemaCollection>();
     arrow::flight::FlightCallOptions call_options;
-    airport_add_standard_headers(call_options, credentials->location());
+    airport_add_standard_headers(call_options, credentials->location(), context);
     airport_add_catalog_header(call_options, catalog_name);
     airport_add_authorization_header(call_options, credentials->auth_token());
 

@@ -55,7 +55,7 @@ namespace duckdb
     }
 
     arrow::flight::FlightCallOptions call_options;
-    airport_add_standard_headers(call_options, attach_parameters_->location());
+    airport_add_standard_headers(call_options, attach_parameters_->location(), context);
     airport_add_catalog_header(call_options, internal_name_);
     airport_add_authorization_header(call_options, attach_parameters_->auth_token());
 

@@ -107,6 +107,7 @@ namespace duckdb
 
     // TODO: handle out-of-order columns using position property
     auto contents = AirportAPI::GetSchemaItems(
+        context,
         db,
         catalog.GetDBPath(),
         schema.name,

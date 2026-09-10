@@ -210,7 +210,7 @@ namespace duckdb
 
         // Now send a list flights request.
         arrow::flight::FlightCallOptions call_options;
-        airport_add_standard_headers(call_options, bind_data.server_location);
+        airport_add_standard_headers(call_options, bind_data.server_location, context);
 
         // FIXME: this will fail with large filter sizes, so its best not to pass it here.
         call_options.headers.emplace_back("airport-action-name", bind_data.action_name);
